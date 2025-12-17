@@ -5,16 +5,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <time.h>
+#include <direct.h>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
 
-#include "C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\common\protocol.h"
-#include "C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\common\net_utils.h"
+#include "../common/protocol.h"
+#include "../common/net_utils.h"
 
 #define DEFAULT_PORT 910
 #define BACKLOG 20
 #define TOPIC_NAME_LEN 64
+
+#define DATA_DIR "data"
+#define UPLOAD_DIR "uploads"
+#define MAX_LOG_LINE 1024
+#define MAX_LOG_PATH 260
+#define MAX_UPLOAD_PATH 260
+#define MAX_HISTORY_LINES 50
 
 typedef struct SubscriberNode {
     SOCKET sock;
@@ -30,6 +39,105 @@ typedef struct Topic {
 static Topic *g_topics = NULL;
 static CRITICAL_SECTION g_topics_lock;
 static volatile int g_running = 1;
+
+typedef struct FileUpload { // no idea how ts works
+    SOCKET sock;
+    unsigned long long expected_size;
+    unsigned long long received_size;
+    FILE *fp;
+    char saved_path[MAX_UPLOAD_PATH];
+    char topic[TOPIC_NAME_LEN];
+    char sender_id[MAX_ID_LEN];
+    struct FileUpload *next;
+} FileUpload;
+
+static FileUpload *g_uploads = NULL;
+static CRITICAL_SECTION g_uploads_lock;
+
+static void ensure_dir(const char *dir_name) {
+    _mkdir(dir_name); // helper function tạo thư mục
+}
+
+static void make_topic_log_path(const char *topic, char *out, size_t out_len) {
+    char safe[TOPIC_NAME_LEN];
+    strncpy(safe, topic, sizeof(safe) - 1);
+    safe[sizeof(safe - 1)] = '\0';
+
+    for (int i = 0; safe[i] != 0; ++i) {
+        if (safe[i] == '/' || safe[i] == '\\' || safe[i] == ':') {
+            safe[i] = '_'; // safe path 
+        }
+    }
+    _snprintf(out, out_len, DATA_DIR"/%s.log", safe);
+}
+
+static void log_history(const char *topic, const char *sender, const char *kind, const char *content) {
+    ensure_dir(DATA_DIR);
+    char path[MAX_LOG_PATH];
+    make_topic_log_path(topic, path, sizeof(path));
+
+    FILE *f = fopen(path, "a");
+    if (!f) {
+        printf("[SERVER] Cannot open log file %s\n", path);
+        return;
+    }
+    time_t now = time(NULL);
+    fprintf(f, "%lld|%s|%s|%s\n", 
+            (long long) now, 
+            sender ? sender : "",
+            kind ? kind : "MSG",
+            content ? content : ""    
+        );
+    fclose(f);
+}
+
+static void replay_history(SOCKET client_sock, const char *topic) {
+    ensure_dir(DATA_DIR);
+    char path[MAX_LOG_PATH];
+    make_topic_log_path(topic, path, sizeof(path));
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        // aint no file here boy
+        printf("Where my file man\n");
+        return;
+    }
+    char line_buf[MAX_LOG_LINE];
+    int total_lines = 0;
+
+    while (fgets(line_buf, sizeof(line_buf), f)) {
+        total_lines++;
+    }
+    rewind(f);
+    int skip = 0;
+    if (total_lines > MAX_HISTORY_LINES) {
+        skip = total_lines - MAX_HISTORY_LINES;
+    }
+
+    int index = 0;
+    while (fgets(line_buf, sizeof(line_buf), f)) {
+        if (index < skip) {
+            index++;
+            continue;
+        }
+        size_t len = strlen(line_buf);
+        PacketHeader hdr;
+        memset(&hdr, 0, sizeof(hdr));
+        hdr.type = (uint8_t)LTM_HISTORY;
+        hdr.payload_size = (uint32_t)len;
+        strncpy(hdr.target_id, topic, MAX_ID_LEN - 1);
+        hdr.target_id[MAX_ID_LEN - 1] = '\0';
+        strncpy(hdr.sender_id, "HISTORY", MAX_ID_LEN - 1);
+        hdr.sender_id[MAX_ID_LEN - 1] = '\0';
+
+        send_all(client_sock, &hdr, sizeof(hdr));
+        if (len > 0) {
+            send_all(client_sock, line_buf, (int)len);
+        }
+        index++;
+    }
+    fclose(f);
+}
 
 static Topic *find_topic(const char *name) {
     Topic *t = g_topics;
@@ -123,6 +231,33 @@ static void remove_socket_from_all_topics(SOCKET sock) {
     LeaveCriticalSection(&g_topics_lock);
 }
 
+static void cancel_uploads_for_socket(SOCKET sock) {
+    EnterCriticalSection(&g_uploads_lock);
+
+    FileUpload *cur = g_uploads;
+    FileUpload *prev = NULL;
+
+    while (cur) {
+        if (cur->sock == sock) {
+            if (cur->fp) {
+                fclose(cur->fp);
+            }
+            if (prev) {
+                prev->next = cur->next;
+            } else {
+                g_uploads = cur->next;
+            }
+            FileUpload *to_free = cur;
+            cur = cur->next;
+            free(to_free);
+            continue;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    LeaveCriticalSection(&g_uploads_lock);
+}
+
 static void route_message(SOCKET sender_sock, PacketHeader *hdr, const char *payload) {
     EnterCriticalSection(&g_topics_lock);
 
@@ -147,6 +282,123 @@ static void route_message(SOCKET sender_sock, PacketHeader *hdr, const char *pay
     LeaveCriticalSection(&g_topics_lock);
 }
 
+static int parse_file_meta(const char *payload, char *filename, size_t filename_len, unsigned long long *out_size) {
+    const char *sep = strchr(payload, '|');
+    if (!sep) return -1;
+    size_t fn_len = (size_t)(sep - payload);
+    if (fn_len >= filename_len) {
+        fn_len = filename_len - 1;
+    }
+    memcpy(filename, payload, fn_len);
+    filename[fn_len] = '\0';
+
+    *out_size = _strtoui64(sep + 1, NULL, 10);
+    return 0;
+}
+
+static void handle_file_meta(SOCKET client_sock, PacketHeader *hdr, const char *payload) {
+    char filename[260] = {0};
+    unsigned long long total_size = 0;
+    if (parse_file_meta(payload, filename, sizeof(filename), &total_size) != 0) {
+        printf("[SERVER] INVALID FILE_META payload from %s: %s\n", hdr->sender_id, payload);
+        return;
+    }
+    ensure_dir(UPLOAD_DIR);
+    
+    char safe_filename[260];
+    strncpy(safe_filename, filename, sizeof(safe_filename) - 1);
+    safe_filename[sizeof(safe_filename) - 1] = '\0';
+
+    for (int i = 0; safe_filename[i] != 0; ++i) {
+        if (safe_filename[i] == '/' || safe_filename[i] == '\\' || safe_filename[i] == ':') {
+            safe_filename[i] = '_';
+        }
+    }
+    char path[MAX_UPLOAD_PATH];
+    time_t now = time(NULL);
+    _snprintf(path, sizeof(path), UPLOAD_DIR"/%lld_%s", (long long)now, safe_filename);
+
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        printf("[SERVER] Cannot open upload file %s\n", path);
+        return;
+    }
+
+    EnterCriticalSection(&g_uploads_lock);
+    FileUpload *fu = (FileUpload *)malloc(sizeof(FileUpload));
+    if (!fu) {
+        LeaveCriticalSection(&g_uploads_lock);
+        fclose(fp);
+        return;
+    }
+
+    fu->sock = client_sock;
+    fu->expected_size = total_size;
+    fu->received_size = 0;
+    fu->fp = fp;
+    strncpy(fu->saved_path, path, sizeof(fu->saved_path) - 1);
+    fu->saved_path[sizeof(fu->saved_path) - 1] = '\0';
+    strncpy(fu->topic, hdr->target_id, TOPIC_NAME_LEN - 1);
+    fu->topic[TOPIC_NAME_LEN - 1] = '\0';
+    strncpy(fu->sender_id, hdr->sender_id, MAX_ID_LEN - 1);
+    fu->sender_id[MAX_ID_LEN - 1] = '\0';
+
+    fu->next = g_uploads;
+    g_uploads = fu;
+    LeaveCriticalSection(&g_uploads_lock);
+
+    // log vaof history
+    char log_content[512];
+    _snprintf(log_content, sizeof(log_content),
+            "[FILE_META] filename=%s saved=%s size=%llu",
+            filename, path, total_size);
+    log_history(hdr->target_id, hdr->sender_id, "FILE", log_content);
+
+    printf("[SERVER] Start receiving file from %s to topic %s: %s (%llu bytes)\n", 
+            hdr->sender_id, hdr->target_id, filename, total_size);
+
+    route_message(client_sock, hdr, payload);
+}
+
+static void handle_file_chunk(SOCKET client_sock, PacketHeader *hdr, const char *payload) {
+    EnterCriticalSection(&g_uploads_lock);
+    FileUpload *fu = g_uploads;
+    FileUpload *prev = NULL;
+
+    while (fu && fu->sock != client_sock) {
+        prev = fu;
+        fu = fu->next;
+    }
+    if (!fu) {
+        LeaveCriticalSection(&g_uploads_lock);
+        printf("[SERVER] FILE_CHUNK but no active upload for socket %d\n", (int)client_sock);
+        return;
+    }
+    size_t written = fwrite(payload, 1, hdr->payload_size, fu->fp);
+    fu->received_size += written;
+    int finished = (fu->received_size >= fu->expected_size);
+    LeaveCriticalSection(&g_uploads_lock);
+    // fwd chunk to subscriber
+    route_message(client_sock, hdr, payload);
+
+    if (finished) {
+        EnterCriticalSection(&g_uploads_lock);
+        if (fu->fp) {
+            fclose(fu->fp);
+            fu->fp = NULL;
+        }
+        if (prev) {
+            prev->next = fu->next;
+        } else {
+            g_uploads = fu->next;
+        }
+        LeaveCriticalSection(&g_uploads_lock);
+
+        printf("[SERVER] Finished receiving file from %s, saved at %s\n", fu->sender_id, fu->saved_path);
+        free(fu);
+    }
+}
+
 DWORD WINAPI client_thread(LPVOID arg) {
     SOCKET client_sock = *(SOCKET *)arg;
     free(arg);
@@ -160,7 +412,7 @@ DWORD WINAPI client_thread(LPVOID arg) {
             break;
         }
 
-        if (hdr.payload_size > MAX_PAYLOAD_SIZE) {
+        if (hdr.payload_size > MAX_PAYLOAD_SIZE && hdr.type != LTM_FILE_CHUNK) {
             printf("[SERVER] Payload too large from client %d, dropping\n", (int)client_sock);
             break;
         }
@@ -172,7 +424,7 @@ DWORD WINAPI client_thread(LPVOID arg) {
             if (recv_all(client_sock, payload, (int)hdr.payload_size) < 0) {
                 printf("[SERVER] Failed to read payload from client %d\n", (int)client_sock);
                 break;
-            }
+            }  // không thêm '\0' cho FILE_CHUNK; nhưng ở đây mình vẫn +1, ok, nhưng mà gpt thêm hdr.type != LTM FILE CHUNK ở đây làm gì?
             payload[hdr.payload_size] = '\0';
         }
 
@@ -185,11 +437,14 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 subscribe_socket_to_topic(client_sock, user_topic);
                 // và group mặc định
                 subscribe_socket_to_topic(client_sock, "group/global");
+                replay_history(client_sock, "group/global");
+                // replay_history(client_sock, user_topic);
                 break;
             }
             case LTM_JOIN_GRP:
                 printf("[SERVER] %s joins group %s\n", hdr.sender_id, hdr.target_id);
                 subscribe_socket_to_topic(client_sock, hdr.target_id);
+                replay_history(client_sock, hdr.target_id);
                 break;
             case LTM_LEAVE_GRP:
                 printf("[SERVER] %s leaves group %s\n", hdr.sender_id, hdr.target_id);
@@ -198,8 +453,14 @@ DWORD WINAPI client_thread(LPVOID arg) {
             case LTM_MESSAGE:
                 printf("[SERVER] MESSAGE from %s to %s: %s\n",
                        hdr.sender_id, hdr.target_id, payload);
-                // sau này thêm save_history ở đây
+                log_history(hdr.target_id, hdr.sender_id, "MSG", payload);
                 route_message(client_sock, &hdr, payload);
+                break;
+            case LTM_FILE_META:
+                handle_file_meta(client_sock, &hdr, payload);
+                break;
+            case LTM_FILE_CHUNK:
+                handle_file_chunk(client_sock, &hdr, payload);
                 break;
             default:
                 printf("[SERVER] Unknown packet type %d from %s\n",
@@ -207,7 +468,7 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 break;
         }
     }
-
+    cancel_uploads_for_socket(client_sock);
     remove_socket_from_all_topics(client_sock);
     closesocket(client_sock);
     printf("[SERVER] Socket %d closed\n", (int)client_sock);
@@ -234,6 +495,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     InitializeCriticalSection(&g_topics_lock);
+    InitializeCriticalSection(&g_uploads_lock);
     SetConsoleCtrlHandler(console_handler, TRUE);
 
     SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);

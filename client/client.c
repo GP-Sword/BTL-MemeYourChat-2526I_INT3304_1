@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <direct.h>
 
 #include <winsock2.h>
 #include <Ws2tcpip.h>
@@ -12,13 +14,43 @@
 #include "../common/protocol.h"
 #include "../common/net_utils.h"
 
-#define DEFAULT_PORT 5555
+#define DEFAULT_PORT 910
 #define INPUT_BUF_SIZE 1024
 
 static SOCKET g_sock = INVALID_SOCKET;
 static char g_user_id[MAX_ID_LEN] = {0};
 static char g_current_group[64] = "group/global";
 static volatile int g_running = 1;
+
+typedef struct {
+    int active;
+    FILE *fp;
+    unsigned long long expected_size;
+    unsigned long long received_size;
+    char filename[260];
+} FileDownloadState;
+
+static FileDownloadState g_file_download = {0};
+
+static void ensure_download_dir(void) {
+    _mkdir("downloads");
+}
+//client reuse
+static int parse_file_meta(const char *payload,
+                           char *filename,
+                           size_t filename_len,
+                           unsigned long long *out_size) {
+    const char *sep = strchr(payload, '|');
+    if (!sep) return -1;
+
+    size_t fn_len = (size_t)(sep - payload);
+    if (fn_len >= filename_len) fn_len = filename_len - 1;
+    memcpy(filename, payload, fn_len);
+    filename[fn_len] = '\0';
+
+    *out_size = _strtoui64(sep + 1, NULL, 10);
+    return 0;
+}
 
 DWORD WINAPI receiver_thread(LPVOID arg) {
     (void)arg;
@@ -127,11 +159,80 @@ static int send_packet(PacketType type, const char *target_id, const char *paylo
     return 0;
 }
 
+static int send_file_to_topic(const char *topic_id, const char *filepath) {
+    FILE *fp = fopen(filepath, "rb");
+    if (!fp) {
+        printf("[CLIENT] Cannot open this file: %s\n", filepath);
+        return -1;
+    }
+    const char *p = filepath;
+    const char *last_sep = filepath;
+    while (*p) {
+        if (*p == '/' || *p == '\\') {
+            last_sep = p + 1;
+        }
+        p++;
+    }
+    const char *filename = last_sep;
+
+    fseek(fp, 0, SEEK_END);
+    long size_long = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (size_long < 0) {
+        printf("[CLIENT] ftell failed.\n");
+        fclose(fp);
+        return -1;
+    }
+    unsigned long long total_size = (unsigned long long)size_long;
+
+    char meta_payload[512];
+    _snprintf(meta_payload, sizeof(meta_payload),
+              "%s|%llu", filename, total_size);
+
+    if (send_packet(LTM_FILE_META, topic_id, meta_payload) != 0) {
+        printf("[CLIENT] Failed to send FILE_META.\n");
+        fclose(fp);
+        return -1;
+    }
+
+    // gửi các CHUNK binary
+    char buffer[MAX_PAYLOAD_SIZE];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+        PacketHeader hdr;
+        memset(&hdr, 0, sizeof(hdr));
+        hdr.type = (uint8_t)LTM_FILE_CHUNK;
+        hdr.payload_size = (uint32_t)n;
+        strncpy(hdr.target_id, topic_id, MAX_ID_LEN - 1);
+        hdr.target_id[MAX_ID_LEN - 1] = '\0';
+        strncpy(hdr.sender_id, g_user_id, MAX_ID_LEN - 1);
+        hdr.sender_id[MAX_ID_LEN - 1] = '\0';
+
+        if (send_all(g_sock, &hdr, (int)sizeof(hdr)) < 0) {
+            printf("[CLIENT] Failed to send FILE_CHUNK header.\n");
+            fclose(fp);
+            return -1;
+        }
+        if (send_all(g_sock, buffer, (int)n) < 0) {
+            printf("[CLIENT] Failed to send FILE_CHUNK data.\n");
+            fclose(fp);
+            return -1;
+        }
+    }
+
+    fclose(fp);
+    printf("[CLIENT] File sent to %s: %s (%llu bytes)\n",
+           topic_id, filepath, total_size);
+    return 0;
+}
+
 static void show_help(void) {
     printf("Commands:\n");
     printf("  /join <groupName>         Join a group (topic = group/<groupName>)\n");
     printf("  /pm <userId> <message>    Private message (topic = user/<userId>)\n");
     printf("  /group <groupName>        Set current group (for normal messages)\n");
+    printf("  /filepm <userId> <path>      Send file privately to user\n");
+    printf("  /filegrp <group> <path>      Send file to group (topic = group/<group>)\n");
     printf("  /quit                     Exit\n");
     printf("  <text>                    Send to current group (default group/global)\n");
 }
@@ -231,6 +332,34 @@ int main(int argc, char *argv[]) {
             if (send_packet(LTM_MESSAGE, topic_id, msg) != 0) {
                 printf("[CLIENT] Failed to send private message.\n");
             }
+        } else if (strncmp(input, "/filepm ", 8) == 0) {
+            char *rest = input + 8;
+            char *space = strchr(rest, ' ');
+            if (!space) {
+                printf("Usage: /filepm <userId> <path>\n");
+                continue;
+            }
+            *space = '\0';
+            char *user_id = rest;
+            char *path = space + 1;
+
+            char topic_id[MAX_ID_LEN];
+            _snprintf(topic_id, sizeof(topic_id), "user/%s", user_id);
+            send_file_to_topic(topic_id, path);
+        } else if (strncmp(input, "/filegrp ", 9) == 0) {
+            char *rest = input + 9;
+            char *space = strchr(rest, ' ');
+            if (!space) {
+                printf("Usage: /filegrp <groupName> <path>\n");
+                continue;
+            }
+            *space = '\0';
+            char *group_name = rest;
+            char *path = space + 1;
+
+            char topic_id[MAX_ID_LEN];
+            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
+            send_file_to_topic(topic_id, path);
         } else if (input[0] == '\0') {
             continue;
         } else {
