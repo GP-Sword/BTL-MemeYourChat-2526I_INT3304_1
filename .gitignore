@@ -31,11 +31,13 @@
 *.la
 *.a
 *.lib
+*.vscode
 
 # Executables
 *.exe
 *.out
 *.app
+
 
 # debug information files
 *.dwo
