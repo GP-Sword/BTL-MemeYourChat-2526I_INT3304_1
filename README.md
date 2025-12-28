@@ -20,6 +20,7 @@ Chỉnh lại include path của server.c. vì lí do nào đấy t k chạy dc 
 5. Terminal 3: .\client_chat.exe 127.0.0.1 910 đặt tên gì đó khác
 
 Expected output:
+```
 Enter your user ID: Alice
 [CLIENT] Connected to 127.0.0.1:910
 [CLIENT] Logged in as Alice. Current group: group/global
