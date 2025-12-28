@@ -1,0 +1,53 @@
+BÀI TẬP LỚN môn Lập trình mạng
+
+Lớp: INT3304 1 Năm học 2020-2021
+
+Mô tả bài toán
+Xây dựng chương trình chat sử dụng giao thức kiểu publish/subscribe  bao gồm các thành phần
+
+Server đóng vai trò Broker
+Clients đóng vai trò vừa là Publisher (bên công bố thông tin) vừa là Subcriber (bên đăng ký nhận thông tin).
+Yêu cầu chính:
+
+Cho phép người dùng chattext trực tiếp với nhau
+Cho phép người dùng chattext theo nhóm
+Cho phép người dùng gửi file cho nhau
+Cho phép người dùng gửi file cho một nhóm
+Cácchức năng khác (chơi game, voice chat, …)
+Môi trường chạy của chương trình
+- Hệ điều hành: Linux/Windows
+
+- Programming language: C, C++,
+
+Đánh giá
+- Điểm chương trình (80%)
+
+ Yêu cầu I: 20%
+
+ Yêu cầu II: 20%
+
+ Yêu cầu III: 20%
+
+ Yêu cầu IV: 20%
+
+ Yêu cầu V: 40%
+
+- Điểm tài liệu: 20%
+
+ Trình bày đầy đủ thuật toán, giao thức, thiết kế chương trình
+
+ Cần ghi lại log quá trình làm việc của nhóm và vai trò của các thành viên
+
+trong nhóm
+
+ Yêu cầu sử dụng github.com để cập nhật code chương trình
+
+- Điểm giao diện: 10%
+
+Giao diện thân thiện, dễ dùng
+
+Hạn nộp bài tập lớn: Chú ý:
+- Một nhóm có 2-4 sinh viên. Điểm thực hành trung bình của các thành viên không chênh nhau quá 3 điểm.
+
+Điểm của các thành viên trong nhóm có thể khác nhau tùy theo mức độ đóng góp của mỗi thành viên
+ 

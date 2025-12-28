@@ -228,6 +228,7 @@ static int send_file_to_topic(const char *topic_id, const char *filepath) {
 
 static void show_help(void) {
     printf("Commands:\n");
+    printf("  /help                     Display the commands again.\n");
     printf("  /join <groupName>         Join a group (topic = group/<groupName>)\n");
     printf("  /pm <userId> <message>    Private message (topic = user/<userId>)\n");
     printf("  /group <groupName>        Set current group (for normal messages)\n");
@@ -267,13 +268,24 @@ int main(int argc, char *argv[]) {
         g_user_id[len - 1] = '\0';
     }
 
+    // new password ting:
+    char password[64];
+    printf("Enter your password: ");
+    if (!fgets(password, sizeof(password), stdin)) {
+        WSACleanup();
+        return 1;
+    }
+    len = strlen(password);
+    if (len > 0 && (password[len - 1] == '\n' || password[len - 1] == '\r')) {
+        password[len - 1] = '\0';
+    }
     if (connect_to_server(server_ip, port) != 0) {
         WSACleanup();
         return 1;
     }
 
     // Gửi LOGIN (không cần payload, sender_id đã có)
-    if (send_packet(LTM_LOGIN, NULL, NULL) != 0) {
+    if (send_packet(LTM_LOGIN, NULL, password) != 0) {
         printf("[CLIENT] Failed to send LOGIN.\n");
         closesocket(g_sock);
         WSACleanup();
@@ -307,7 +319,10 @@ int main(int argc, char *argv[]) {
             if (send_packet(LTM_JOIN_GRP, topic_id, NULL) == 0) {
                 printf("[CLIENT] Joined group %s\n", topic_id);
             }
-        } else if (strncmp(input, "/group ", 7) == 0) {
+        }
+        else if (strncmp(input, "/help ", 5) == 0) {
+            show_help();
+        } else if (strncmp(input, "/group ", 8) == 0) {
             char *group_name = input + 7;
             if (*group_name == '\0') {
                 printf("Usage: /group <groupName>\n");

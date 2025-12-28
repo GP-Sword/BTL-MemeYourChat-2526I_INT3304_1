@@ -12,6 +12,7 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 #include "../common/protocol.h"
+#include "../common/sqlite.h"
 #include "../common/net_utils.h"
 
 #define DEFAULT_PORT 910
@@ -39,6 +40,7 @@ typedef struct Topic {
 static Topic *g_topics = NULL;
 static CRITICAL_SECTION g_topics_lock;
 static volatile int g_running = 1;
+static SOCKET g_listen_sock = INVALID_SOCKET;
 
 typedef struct FileUpload { // no idea how ts works
     SOCKET sock;
@@ -430,7 +432,55 @@ DWORD WINAPI client_thread(LPVOID arg) {
 
         switch (hdr.type) {
             case LTM_LOGIN: {
-                printf("[SERVER] LOGIN from %s\n", hdr.sender_id);
+                const char *username = hdr.sender_id;
+                const char *password = payload;
+                printf("[SERVER] LOGIN from %s\n", username);
+
+                if (db_user_exists(username)) {
+                    if (!db_verify_user(username, password)) {
+                        printf("[SERVER] Invalid password for %s\n", username);
+                        // send error qq
+                        PacketHeader err;
+                        memset(&err, 0, sizeof(err));
+                        err.type = (uint8_t)LTM_ERROR;
+                        strncpy(err.sender_id, "SERVER", MAX_ID_LEN-1);
+                        const char *msg = "Invalid username/password!\n";
+                        err.payload_size = (uint32_t)strlen(msg);
+
+                        if (send_all(client_sock, &err, sizeof(err)) == 0) {
+                            send_all(client_sock, msg, (int)err.payload_size);
+                        }
+                        closesocket(client_sock);
+                        printf("[SERVER] Socket %d is closed.\n", (int)client_sock);
+                        return 0;
+                    } else {
+                        printf("[SERVER] Welcome user %s.\n", username);
+                    }
+                } else {
+                    // create new user
+                    printf("[SERVER] New user detected! To register, type your password here. Please do not forget the password.");
+                    if (!db_create_user(username, password)) {
+                        printf("[SERVER] Failed to create user %s\n", username);
+
+                        PacketHeader err;
+                        memset(&err, 0, sizeof(err));
+                        err.type = (uint8_t)LTM_ERROR;
+                        strncpy(err.sender_id, "SERVER", MAX_ID_LEN - 1);
+                        const char *msg = "Failed to create user.\n";
+                        err.payload_size = (uint32_t)strlen(msg);
+
+                        if (send_all(client_sock, &err, sizeof(err)) == 0) {
+                            send_all(client_sock, msg, (int)err.payload_size);
+                        }
+
+                        closesocket(client_sock);
+                        printf("[SERVER] Socket %d is closed (user create failure)\n", (int)client_sock);
+                        return 0;
+                    } else {
+                        printf("[SERVER] Registered new user %s\n", username);
+                    }
+                }
+
                 // auto-sub topic riêng user/<id>
                 char user_topic[TOPIC_NAME_LEN];
                 _snprintf(user_topic, sizeof(user_topic), "user/%s", hdr.sender_id);
@@ -478,7 +528,13 @@ DWORD WINAPI client_thread(LPVOID arg) {
 BOOL WINAPI console_handler(DWORD signal) {
     if (signal == CTRL_C_EVENT) {
         printf("\n [SERVER] Ctrl+C detected, shutting down server...\n");
+        printf("%d\n", g_running);
         g_running = 0;
+        printf("%d\n", g_running);
+        if (g_listen_sock != INVALID_SOCKET) {
+            closesocket(g_listen_sock);                 // force accept() to fail
+            g_listen_sock = INVALID_SOCKET;
+        }
     }
     return TRUE;
 }
@@ -494,18 +550,25 @@ int main(int argc, char *argv[]) {
         printf("WSAStartup failed, error: %d\n", wsa_err);
         return 1;
     }
+    if (db_init("users.db") != 0) {
+        printf("[SERVER] Failed to initialize user database.\n");
+        WSACleanup();
+        return 1;
+    }
+
     InitializeCriticalSection(&g_topics_lock);
     InitializeCriticalSection(&g_uploads_lock);
     SetConsoleCtrlHandler(console_handler, TRUE);
 
-    SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_sock == INVALID_SOCKET) {
+    g_listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_listen_sock == INVALID_SOCKET) {
+        printf("g_listen_sock");
         printf("socket() failed, error: %d\n", WSAGetLastError());
         WSACleanup();
         return 1;
     }
     int opt = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+    setsockopt(g_listen_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -513,16 +576,16 @@ int main(int argc, char *argv[]) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons((u_short)port);
 
-    if (bind(listen_sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    if (bind(g_listen_sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
         printf("bind() failed, error: %d\n", WSAGetLastError());
-        closesocket(listen_sock);
+        closesocket(g_listen_sock);
         WSACleanup();
         return 1;
     }
 
-    if (listen(listen_sock, BACKLOG) == SOCKET_ERROR) {
+    if (listen(g_listen_sock, BACKLOG) == SOCKET_ERROR) {
         printf("listen() failed, error: %d\n", WSAGetLastError());
-        closesocket(listen_sock);
+        closesocket(g_listen_sock);
         WSACleanup();
         return 1;
     }
@@ -532,9 +595,8 @@ int main(int argc, char *argv[]) {
     while(g_running) {
         struct sockaddr_in client_addr;
         int client_len = sizeof(client_addr);
-        SOCKET client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &client_len);
+        SOCKET client_sock = accept(g_listen_sock, (struct sockaddr *)&client_addr, &client_len);
         if (client_sock == INVALID_SOCKET) {
-            if (!g_running) break;
             printf("accept() failed, error: %d\n", WSAGetLastError());
             continue;
         }
@@ -560,8 +622,9 @@ int main(int argc, char *argv[]) {
         CloseHandle(hThread); // k cafan giuwx handle
     }
 
-    closesocket(listen_sock);
     DeleteCriticalSection(&g_topics_lock);
+    DeleteCriticalSection(&g_uploads_lock);
+    db_close();
     WSACleanup();
     return 0;
 }
