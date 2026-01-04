@@ -21,6 +21,7 @@ static SOCKET g_sock = INVALID_SOCKET;
 static char g_user_id[MAX_ID_LEN] = {0};
 static char g_current_group[64] = "group/global";
 static volatile int g_running = 1;
+static int g_auth_done = 0;
 
 typedef struct {
     int active;
@@ -50,6 +51,14 @@ static int parse_file_meta(const char *payload,
 
     *out_size = _strtoui64(sep + 1, NULL, 10);
     return 0;
+}
+
+static void strip_newline(char *s) {
+    size_t len = strlen(s);
+    while (len > 0 && (s[len-1] == '\n' || s[len-1] == '\r')) {
+        s[len-1] = '\0';
+        len--;
+    }
 }
 
 DWORD WINAPI receiver_thread(LPVOID arg) {
@@ -122,15 +131,6 @@ static int connect_to_server(const char *ip, int port) {
     }
 
     printf("[CLIENT] Connected to %s:%d\n", ip, port);
-
-    HANDLE hThread = CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
-    if (hThread == NULL) {
-        printf("CreateThread failed\n");
-        closesocket(g_sock);
-        return -1;
-    }
-    CloseHandle(hThread);
-
     return 0;
 }
 
@@ -238,6 +238,203 @@ static void show_help(void) {
     printf("  <text>                    Send to current group (default group/global)\n");
 }
 
+static int login_register_flow(const char *server_ip, int port) {
+    while (1) {
+        // 1) Nhập username
+        printf("Enter your user ID: ");
+        if (!fgets(g_user_id, sizeof(g_user_id), stdin)) {
+            return -1;
+        }
+        strip_newline(g_user_id);
+        if (g_user_id[0] == '\0') {
+            printf("Username cannot be empty.\n");
+            continue;
+        }
+
+        // 2) Kết nối tới server
+        if (connect_to_server(server_ip, port) != 0) {
+            printf("Cannot connect to server.\n");
+            return -1;
+        }
+
+        // 3) Gửi LOGIN mode=CHECK để hỏi server "user tồn tại không?"
+        char check_payload[32] = "CHECK";
+        if (send_packet(LTM_LOGIN, NULL, check_payload) != 0) {
+            printf("Failed to send CHECK login.\n");
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            return -1;
+        }
+
+        // 4) Đọc 1 packet trả lời (blocking)
+        PacketHeader hdr;
+        if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
+            printf("Failed to receive response for CHECK.\n");
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            return -1;
+        }
+
+        char payload[MAX_PAYLOAD_SIZE + 1];
+        memset(payload, 0, sizeof(payload));
+        if (hdr.payload_size > 0) {
+            if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
+                printf("Failed to read payload.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                return -1;
+            }
+            payload[hdr.payload_size] = '\0';
+        }
+
+        int user_exists = 0;
+        if (hdr.type == LTM_ERROR && strcmp(payload, "USER_EXISTS") == 0) {
+            user_exists = 1;
+            printf("User exists. Please enter your password.\n");
+        } else if (hdr.type == LTM_ERROR && strcmp(payload, "USER_NOT_EXISTS") == 0) {
+            user_exists = 0;
+            printf("User does not exist. Enter password to register new user.\n");
+        } else {
+            printf("Unexpected response from server during CHECK: type=%d payload=%s\n",
+                   hdr.type, payload);
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            return -1;
+        }
+
+        // 5) Nhập password
+        char password[64];
+        printf("Password: ");
+        if (!fgets(password, sizeof(password), stdin)) {
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            return -1;
+        }
+        strip_newline(password);
+
+        size_t pwlen = strlen(password);
+        if (pwlen < 8 || pwlen > 12) {
+            printf("Password length must be 8-12 characters.\n");
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            continue; // quay lại từ đầu, hỏi username lại
+        }
+
+        if (user_exists) {
+            // 6A) LOGIN mode
+            char login_payload[128];
+            _snprintf(login_payload, sizeof(login_payload),
+                      "LOGIN|%s", password);
+
+            if (send_packet(LTM_LOGIN, NULL, login_payload) != 0) {
+                printf("Failed to send LOGIN.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                return -1;
+            }
+
+            // Chờ ack hoặc error
+            if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
+                printf("Failed to receive LOGIN response.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                return -1;
+            }
+
+            memset(payload, 0, sizeof(payload));
+            if (hdr.payload_size > 0) {
+                if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
+                    printf("Failed to read LOGIN payload.\n");
+                    closesocket(g_sock);
+                    g_sock = INVALID_SOCKET;
+                    return -1;
+                }
+                payload[hdr.payload_size] = '\0';
+            }
+
+            if (hdr.type == LTM_ERROR) {
+                if (strcmp(payload, "INVALID_PASSWORD") == 0) {
+                    printf("Invalid password.\n");
+                } else if (strcmp(payload, "BAD_PASSWORD_LENGTH") == 0) {
+                    printf("Password length must be 8-12 characters.\n");
+                } else if (strcmp(payload, "USER_NOT_EXISTS") == 0) {
+                    printf("User no longer exists.\n");
+                } else {
+                    printf("Login error: %s\n", payload);
+                }
+
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+
+                char c[8];
+                printf("Try again? (y/n): ");
+                if (!fgets(c, sizeof(c), stdin)) return -1;
+                if (c[0] != 'y' && c[0] != 'Y') {
+                    return -1; // user không muốn thử nữa
+                }
+                continue; // quay lại từ đầu hỏi username
+            }
+
+            if (hdr.type == LTM_LOGIN) {
+                // LOGIN OK – g_sock vẫn mở và sẽ dùng cho chat
+                printf("[CLIENT] Logged in as %s. Current group: %s\n",
+                       g_user_id, g_current_group);
+                show_help();
+                return 0;
+            }
+
+            printf("Unexpected packet after LOGIN: type=%d\n", hdr.type);
+            closesocket(g_sock);
+            g_sock = INVALID_SOCKET;
+            return -1;
+        } else {
+            // 6B) REGISTER mode
+            if (send_packet(LTM_REGISTER, NULL, password) != 0) {
+                printf("Failed to send REGISTER.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                return -1;
+            }
+
+            if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
+                printf("Failed to receive REGISTER response.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                return -1;
+            }
+
+            memset(payload, 0, sizeof(payload));
+            if (hdr.payload_size > 0) {
+                if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
+                    printf("Failed to read REGISTER payload.\n");
+                    closesocket(g_sock);
+                    g_sock = INVALID_SOCKET;
+                    return -1;
+                }
+                payload[hdr.payload_size] = '\0';
+            }
+
+            if (hdr.type == LTM_ERROR && strcmp(payload, "REGISTER_OK") == 0) {
+                printf("Registration success. Please login again.\n");
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                continue; // quay lại vòng while, nhập username + login
+            } else {
+                printf("Register error: %s\n", payload);
+                closesocket(g_sock);
+                g_sock = INVALID_SOCKET;
+                char c[8];
+                printf("Try again? (y/n): ");
+                if (!fgets(c, sizeof(c), stdin)) return -1;
+                if (c[0] != 'y' && c[0] != 'Y') {
+                    return -1;
+                }
+                continue;
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     char server_ip[64] = "127.0.0.1";
     int port = DEFAULT_PORT;
@@ -258,43 +455,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    printf("Enter your user ID: ");
-    if (!fgets(g_user_id, sizeof(g_user_id), stdin)) {
+    if (login_register_flow(server_ip, port) != 0) {
         WSACleanup();
-        return 1;
-    }
-    size_t len = strlen(g_user_id);
-    if (len > 0 && (g_user_id[len - 1] == '\n' || g_user_id[len - 1] == '\r')) {
-        g_user_id[len - 1] = '\0';
+        return 0; // user logout hoặc fail
     }
 
-    // new password ting:
-    char password[64];
-    printf("Enter your password: ");
-    if (!fgets(password, sizeof(password), stdin)) {
-        WSACleanup();
-        return 1;
-    }
-    len = strlen(password);
-    if (len > 0 && (password[len - 1] == '\n' || password[len - 1] == '\r')) {
-        password[len - 1] = '\0';
-    }
-    if (connect_to_server(server_ip, port) != 0) {
-        WSACleanup();
-        return 1;
-    }
+    // login OK, g_sock đã connected + server đã auto-sub + replay history
+    // start receiver_thread and begin chat loop
 
-    // Gửi LOGIN (không cần payload, sender_id đã có)
-    if (send_packet(LTM_LOGIN, NULL, password) != 0) {
-        printf("[CLIENT] Failed to send LOGIN.\n");
+    HANDLE hThread = CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
+    if (hThread == NULL) {
+        printf("CreateThread failed\n");
         closesocket(g_sock);
         WSACleanup();
         return 1;
     }
-
-    printf("[CLIENT] Logged in as %s. Current group: %s\n",
-           g_user_id, g_current_group);
-    show_help();
+    CloseHandle(hThread);
 
     char input[INPUT_BUF_SIZE];
 
@@ -320,7 +496,7 @@ int main(int argc, char *argv[]) {
                 printf("[CLIENT] Joined group %s\n", topic_id);
             }
         }
-        else if (strncmp(input, "/help ", 5) == 0) {
+        else if (strncmp(input, "/help", 5) == 0) {
             show_help();
         } else if (strncmp(input, "/group ", 8) == 0) {
             char *group_name = input + 7;

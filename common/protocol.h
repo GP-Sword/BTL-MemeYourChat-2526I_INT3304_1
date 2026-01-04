@@ -8,6 +8,7 @@
 
 typedef enum {
     LTM_LOGIN = 1,
+    LTM_REGISTER,
     LTM_JOIN_GRP,
     LTM_LEAVE_GRP,
     LTM_MESSAGE,
