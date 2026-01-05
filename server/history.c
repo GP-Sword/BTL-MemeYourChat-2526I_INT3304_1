@@ -11,7 +11,8 @@
 #define MAX_LOG_PATH 260
 #define MAX_HISTORY_LINES 50
  
-// Helper functions
+// --- CÁC HÀM HELPER (ĐẶT Ở TRÊN CÙNG) ---
+
 static void format_time_str(long long timestamp, char *out_buf, size_t buf_size) {
     time_t t = (time_t)timestamp;
     struct tm *tm_info = localtime(&t);
@@ -67,18 +68,37 @@ void history_make_paths(const char *topic, char *group_name, char *files_dir) {
     }
 }
 
-void history_log(const char *topic, const char *sender, const char *kind, const char *content) {
+// --- HÀM GHI LOG CỤ THỂ (PHẢI ĐẶT TRƯỚC history_log) ---
+static void write_log_line(const char *storage_topic, const char *logical_topic, const char *sender, const char *kind, const char *content) {
     char path[MAX_LOG_PATH];
-    resolve_paths(topic, path);
+    // Hàm resolve_paths sẽ tạo thư mục dựa trên storage_topic (Nơi lưu)
+    resolve_paths(storage_topic, path); 
 
     FILE *f = fopen(path, "a");
     if (!f) return;
     
     time_t now = time(NULL);
-    fprintf(f, "%lld|%s|%s|%s|%s\n", (long long)now, topic, sender, kind, content);
+    // Lưu ý: Lưu logical_topic (Target ID gốc) vào nội dung để Client biết tin này gửi cho ai
+    fprintf(f, "%lld|%s|%s|%s|%s\n", (long long)now, logical_topic, sender, kind, content);
     fclose(f);
 }
 
+// --- HÀM GHI LOG CHÍNH ---
+void history_log(const char *topic, const char *sender, const char *kind, const char *content) {
+    // 1. Ghi log cho người nhận (Target)
+    write_log_line(topic, topic, sender, kind, content);
+
+    // 2. LOGIC MỚI: Nếu là Private Chat, ghi thêm 1 bản cho người gửi
+    if (strncmp(topic, "user/", 5) == 0 && strcmp(sender, "SERVER") != 0 && strcmp(sender, "HISTORY") != 0) {
+        char sender_topic[64];
+        snprintf(sender_topic, sizeof(sender_topic), "user/%s", sender);
+        
+        // Lưu vào thư mục của Sender (sender_topic), nhưng nội dung vẫn giữ topic gốc
+        write_log_line(sender_topic, topic, sender, kind, content);
+    }
+}
+
+// --- HÀM ĐỌC LOG (REPLAY) ---
 void history_replay(SOCKET client_sock, const char *topic) {
     char path[MAX_LOG_PATH];
     resolve_paths(topic, path);
@@ -125,19 +145,50 @@ void history_replay(SOCKET client_sock, const char *topic) {
         char time_str[64];
         format_time_str(ts, time_str, sizeof(time_str));
 
+        // Format này chỉ dùng để hiển thị (pretty print) gửi về client
+        // Client sẽ parse lại string này trong ParseAndAddMessage (lưu ý logic parse bên Client phải khớp)
         snprintf(pretty_msg, sizeof(pretty_msg), 
                 "[HISTORY][%s] %s - %s <%s>: %s", log_topic, time_str, sender, kind, content);
+        
+        // Gửi Raw Data thay vì Pretty Msg để Client dễ xử lý hơn?
+        // Hiện tại Client đang parse chuỗi Pretty Msg này. Để đơn giản giữ nguyên như code cũ của bạn.
+        // Nhưng cách tốt nhất là gửi raw log line: timestamp|topic|sender|kind|content
+        
+        // SỬA LẠI: Gửi đúng format RAW để Client parse bằng logic mới trong net_logic.cpp
+        // Logic mới bên Client: timestamp|sender|kind|content
+        // Chúng ta nên gửi raw line (đã strip newline)
+        // Tuy nhiên hàm ParseAndAddMessage bên Client đang mong đợi:
+        // "[HISTORY]..." HOẶC là raw line
+        
+        // Để khớp với logic ParseAndAddMessage mới mà tôi đưa cho bạn (dùng stringstream parse |):
+        // Chúng ta hãy gửi lại chính dòng raw line đó.
+        
+        // Cách 1: Gửi Pretty Msg như cũ (Client parse khó khăn hơn)
+        // Cách 2: Gửi Raw Line (Client parse dễ hơn) -> KHUYÊN DÙNG
+        
+        // Ở đây tôi sẽ gửi Raw Line để logic ParseAndAddMessage bên Client hoạt động chuẩn xác nhất
+        // Format Raw gửi đi: timestamp|sender|kind|content
+        // (Lưu ý: topic đã có trong header target_id, nhưng trong log file của user/Alice thì topic lại là user/Bob)
+        
+        // Để an toàn nhất với code Client hiện tại (vừa sửa), ta sẽ gửi RAW string:
+        // timestamp|sender|kind|content
+        char raw_msg_for_client[MAX_PAYLOAD_SIZE];
+        snprintf(raw_msg_for_client, sizeof(raw_msg_for_client), 
+            "%lld|%s|%s|%s", ts, sender, kind, content);
 
         PacketHeader hdr;
         memset(&hdr, 0, sizeof(hdr));
         hdr.type = LTM_HISTORY;
-        hdr.payload_size = (uint32_t)strlen(pretty_msg);
-        strcpy(hdr.target_id, topic);
+        hdr.payload_size = (uint32_t)strlen(raw_msg_for_client);
+        
+        // QUAN TRỌNG: target_id gửi về Client phải là log_topic (Topic gốc của cuộc hội thoại)
+        // Ví dụ: Đang đọc log của Alice, gặp dòng tin nhắn với Bob -> target_id = "user/Bob"
+        strcpy(hdr.target_id, log_topic); 
         strcpy(hdr.sender_id, "HISTORY");
 
         send_all(client_sock, &hdr, sizeof(hdr));
         if (hdr.payload_size > 0) {
-            send_all(client_sock, pretty_msg, (int)hdr.payload_size);
+            send_all(client_sock, raw_msg_for_client, (int)hdr.payload_size);
         }
     }
     fclose(f);

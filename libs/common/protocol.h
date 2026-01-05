@@ -23,21 +23,26 @@ typedef enum {
     LTM_ERROR,
     LTM_GROUP_CMD,
 
-    LTM_AUTH_REQ, // check if user wanna login or reg
+    LTM_AUTH_REQ, 
     LTM_AUTH_RESP 
 } PacketType;
 
+// BẮT ĐẦU ÉP KIỂU 1 BYTE (Không padding)
 #pragma pack(push, 1)
+
 typedef struct {
-    uint8_t type;
-    uint32_t payload_size;
-    char target_id[MAX_ID_LEN]; // user/ hoặc group chat/
-    char sender_id[MAX_ID_LEN]; // user id người gửi
-} PacketHeader;
+    uint8_t type;               // 1 byte
+    uint32_t payload_size;      // 4 bytes
+    char target_id[MAX_ID_LEN]; // 32 bytes
+    char sender_id[MAX_ID_LEN]; // 32 bytes
+} PacketHeader; 
+// Tổng cộng chính xác: 1 + 4 + 32 + 32 = 69 bytes
+
+// KẾT THÚC ÉP KIỂU
+#pragma pack(pop)
 
 #ifdef __cplusplus
 }
 #endif
 
-#pragma pack(pop)
 #endif
