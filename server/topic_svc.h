@@ -2,7 +2,7 @@
 #define TOPIC_MGR_H
 
 #include <winsock2.h>
-#include "../libs/protocol.h"
+#include "../libs/common/protocol.h"
 
 void topic_svc_init(void);
 void topic_svc_cleanup(void);

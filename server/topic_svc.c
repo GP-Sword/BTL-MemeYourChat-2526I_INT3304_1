@@ -1,7 +1,7 @@
 #include "topic_svc.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "../libs/net_utils.h"
+#include "../libs/common/net_utils.h"
 
 typedef struct SubscriberNode {
     SOCKET sock;

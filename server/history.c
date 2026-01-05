@@ -4,8 +4,8 @@
 #include <time.h>
 #include <direct.h>
 #include <string.h>
-#include "../libs/protocol.h"
-#include "../libs/net_utils.h"
+#include "../libs/common/protocol.h"
+#include "../libs/common/net_utils.h"
 
 #define DATA_DIR "resources"
 #define MAX_LOG_PATH 260
