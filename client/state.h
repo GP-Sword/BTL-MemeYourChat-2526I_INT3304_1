@@ -1,33 +1,43 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <map>
 #include <mutex>
 
-struct ChatMessage {
+// Cấu trúc 1 tin nhắn
+struct Message {
+    long long timestamp;
     std::string sender;
-    std::string target; // Group or UserID
     std::string content;
-    bool is_history;
+    bool is_file;      // Nếu là tin nhắn file
+    bool is_history;   // Có phải tin lịch sử load lại không
+};
+
+// Cấu trúc 1 cuộc trò chuyện (Group hoặc User)
+struct Conversation {
+    std::string id;         // VD: "group/global" hoặc "user/Bob"
+    std::string name;       // Tên hiển thị: "Global Chat" hoặc "Bob"
+    std::vector<Message> messages;
+    bool has_unread;
 };
 
 struct AppState {
-    // Dữ liệu đăng nhập
+    // Thông tin đăng nhập
+    char server_ip[32] = "127.0.0.1";
+    int server_port = 910;
     char username[32] = "";
     char password[32] = "";
     bool is_logged_in = false;
-    char server_ip[32] = "127.0.0.1";
-    int server_port = 910;
 
-    // Dữ liệu Chat
-    char current_group[64] = "group/global"; // Nhóm đang chọn xem
-    char input_buffer[1024] = "";            // Ô nhập liệu
+    // Chat Data
+    // Map lưu trữ: Key là ID cuộc trò chuyện (vd: "group/global") -> Value là dữ liệu
+    std::map<std::string, Conversation> conversations;
     
-    // Danh sách tin nhắn (Cần mutex bảo vệ)
-    std::vector<ChatMessage> messages;
-    std::mutex msg_mutex;
+    std::string current_chat_id = ""; // ID của nhóm đang chọn xem
+    char input_buffer[1024] = "";     // Ô nhập tin nhắn
+    char search_buffer[64] = "";      // Ô tìm kiếm/Thêm nhóm
 
-    // Danh sách nhóm/contact (Hardcode demo, sau này server gửi về)
-    std::vector<std::string> groups = {"group/global", "group/dev", "group/game"};
+    std::mutex data_mutex; // Khóa an toàn cho luồng
 };
 
-extern AppState g_State; // Biến toàn cục khai báo ở main.cpp
+extern AppState g_State;

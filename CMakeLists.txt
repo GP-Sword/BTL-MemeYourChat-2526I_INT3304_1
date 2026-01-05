@@ -46,4 +46,5 @@ target_link_libraries(ChatClient PRIVATE
     ws2_32 
     imm32
     gdi32
+    "-mconsole"  # <--- THÊM DÒNG NÀY ĐỂ ÉP DÙNG HÀM main()
 )
