@@ -17,6 +17,7 @@ typedef enum {
     LTM_FILE_CHUNK,
     LTM_DOWNLOAD,
     LTM_ERROR,
+    LTM_GROUP_CMD,
 
     LTM_AUTH_REQ, // check if user wanna login or reg
     LTM_AUTH_RESP 

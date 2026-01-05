@@ -96,6 +96,9 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
             case LTM_HISTORY:
                 printf("(HISTORY) %s\n", payload);
                 break;
+            case LTM_ERROR:
+                printf("[SERVER ERROR] %s\n", payload);
+                break;
             default:
                 printf("[CLIENT] Packet type %d, payload: %s\n",
                        hdr.type, payload);
@@ -229,11 +232,12 @@ static int send_file_to_topic(const char *topic_id, const char *filepath) {
 static void show_help(void) {
     printf("Commands:\n");
     printf("  /help                     Display the commands again.\n");
-    printf("  /join <groupName>         Join a group (topic = group/<groupName>)\n");
+    printf("  /group <name>             Create group if needed, set as current, and server lists all groups.\n");
+    printf("  /removegroup <name>       Remove an existing group (except 'global') and list groups.\n");
+    printf("  /join <groupName>         Join an existing group (topic = group/<groupName>)\n");
     printf("  /pm <userId> <message>    Private message (topic = user/<userId>)\n");
-    printf("  /group <groupName>        Set current group (for normal messages)\n");
-    printf("  /filepm <userId> <path>      Send file privately to user\n");
-    printf("  /filegrp <group> <path>      Send file to group (topic = group/<group>)\n");
+    printf("  /filepm <userId> <path>   Send file privately to user\n");
+    printf("  /filegrp <group> <path>   Send file to group (topic = group/<group>)\n");
     printf("  /quit                     Exit\n");
     printf("  <text>                    Send to current group (default group/global)\n");
 }
@@ -492,21 +496,49 @@ int main(int argc, char *argv[]) {
             }
             char topic_id[MAX_ID_LEN];
             _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
+
             if (send_packet(LTM_JOIN_GRP, topic_id, NULL) == 0) {
-                printf("[CLIENT] Joined group %s\n", topic_id);
+                // server sẽ báo lỗi nếu group không tồn tại
+                strncpy(g_current_group, topic_id, sizeof(g_current_group) - 1);
+                g_current_group[sizeof(g_current_group) - 1] = '\0';
+                printf("[CLIENT] Joined group %s (current group set)\n", topic_id);
             }
-        }
-        else if (strncmp(input, "/help", 5) == 0) {
+        } else if (strncmp(input, "/help", 5) == 0) {
             show_help();
-        } else if (strncmp(input, "/group ", 8) == 0) {
+        } else if (strncmp(input, "/group ", 6) == 0) {
             char *group_name = input + 7;
             if (*group_name == '\0') {
                 printf("Usage: /group <groupName>\n");
                 continue;
             }
-            _snprintf(g_current_group, sizeof(g_current_group),
-                      "group/%s", group_name);
-            printf("[CLIENT] Current group set to %s\n", g_current_group);
+
+            char topic_id[MAX_ID_LEN];
+            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
+
+            // yêu cầu server tạo group (nếu chưa có) & gửi danh sách group
+            if (send_packet(LTM_GROUP_CMD, topic_id, "CREATE") != 0) {
+                printf("[CLIENT] Failed to send group create command.\n");
+            } else {
+                strncpy(g_current_group, topic_id, sizeof(g_current_group) - 1);
+                g_current_group[sizeof(g_current_group) - 1] = '\0';
+                printf("[CLIENT] Current group set to %s\n", g_current_group);
+                printf("[CLIENT] Server will list all groups in chat.\n");
+            }
+        } else if (strncmp(input, "/removegroup ", 13) == 0) {
+            char *group_name = input + 13;
+            if (*group_name == '\0') {
+                printf("Usage: /removegroup <groupName>\n");
+                continue;
+            }
+
+            char topic_id[MAX_ID_LEN];
+            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
+
+            if (send_packet(LTM_GROUP_CMD, topic_id, "REMOVE") != 0) {
+                printf("[CLIENT] Failed to send group remove command.\n");
+            } else {
+                printf("[CLIENT] Remove group request sent. Server will respond.\n");
+            }
         } else if (strncmp(input, "/pm ", 4) == 0) {
             char *rest = input + 4;
             char *space = strchr(rest, ' ');
