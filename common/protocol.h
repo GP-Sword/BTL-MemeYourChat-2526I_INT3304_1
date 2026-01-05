@@ -8,6 +8,7 @@
 
 typedef enum {
     LTM_LOGIN = 1,
+    LTM_REGISTER,
     LTM_JOIN_GRP,
     LTM_LEAVE_GRP,
     LTM_MESSAGE,
@@ -15,7 +16,10 @@ typedef enum {
     LTM_FILE_META,
     LTM_FILE_CHUNK,
     LTM_DOWNLOAD,
-    LTM_ERROR
+    LTM_ERROR,
+
+    LTM_AUTH_REQ, // check if user wanna login or reg
+    LTM_AUTH_RESP 
 } PacketType;
 
 #pragma pack(push, 1)
