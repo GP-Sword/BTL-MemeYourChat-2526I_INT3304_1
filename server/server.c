@@ -178,7 +178,7 @@ static void replay_history(SOCKET client_sock, const char *topic) {
     FILE *f = fopen(path, "r");
     if (!f) {
         // aint no file here boy
-        printf("Where my file man\n");
+        printf("No file(s) detected in this group.\n");
         return;
     }
     char line_buf[MAX_LOG_LINE];
@@ -291,6 +291,37 @@ static void unsubscribe_socket_from_topic(SOCKET sock, const char *topic_name) {
     LeaveCriticalSection(&g_topics_lock);
 }
 
+static void subscribe_socket_to_topic_existing(SOCKET sock, const char *topic_name) {
+    EnterCriticalSection(&g_topics_lock);
+    Topic *t = find_topic(topic_name);
+    if (!t) {
+        LeaveCriticalSection(&g_topics_lock);
+        return;
+    }
+
+    SubscriberNode *cur = t->subs;
+    while (cur) {
+        if (cur->sock == sock) {
+            LeaveCriticalSection(&g_topics_lock);
+            return;
+        }
+        cur = cur->next;
+    }
+
+    SubscriberNode *node = (SubscriberNode *)malloc(sizeof(SubscriberNode));
+    if (!node) {
+        LeaveCriticalSection(&g_topics_lock);
+        return;
+    }
+    node->sock = sock;
+    node->next = t->subs;
+    t->subs = node;
+
+    printf("[SERVER] Socket %d subscribed to existing topic %s\n",
+           (int)sock, topic_name);
+    LeaveCriticalSection(&g_topics_lock);
+}
+
 static void remove_socket_from_all_topics(SOCKET sock) {
     EnterCriticalSection(&g_topics_lock);
     Topic *t = g_topics;
@@ -359,6 +390,23 @@ static void route_message(SOCKET sender_sock, PacketHeader *hdr, const char *pay
         cur = cur->next;
     }
     LeaveCriticalSection(&g_topics_lock);
+}
+
+static void send_server_pm(const char *username, const char *text) {
+    char topic[TOPIC_NAME_LEN];
+    _snprintf(topic, sizeof(topic), "user/%s", username);
+
+    PacketHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.type = (uint8_t)LTM_MESSAGE;
+    hdr.payload_size = (uint32_t)strlen(text);
+    strncpy(hdr.target_id, topic, MAX_ID_LEN - 1);
+    hdr.target_id[MAX_ID_LEN - 1] = '\0';
+    strncpy(hdr.sender_id, "SERVER", MAX_ID_LEN - 1);
+    hdr.sender_id[MAX_ID_LEN - 1] = '\0';
+
+    // gửi cho tất cả subscriber của topic user/<username>
+    route_message(INVALID_SOCKET, &hdr, text);
 }
 
 static int parse_file_meta(const char *payload, char *filename, size_t filename_len, unsigned long long *out_size) {
@@ -485,6 +533,54 @@ static void handle_file_chunk(SOCKET client_sock, PacketHeader *hdr, const char 
     }
 }
 
+static int remove_topic(const char *name) {
+    EnterCriticalSection(&g_topics_lock);
+    Topic **cur = &g_topics;
+    while (*cur) {
+        if (strcmp((*cur)->name, name) == 0) {
+            Topic *t = *cur;
+            *cur = t->next;
+
+            // free subscriber list
+            SubscriberNode *s = t->subs;
+            while (s) {
+                SubscriberNode *tmp = s;
+                s = s->next;
+                free(tmp);
+            }
+            free(t);
+
+            LeaveCriticalSection(&g_topics_lock);
+            return 1;  // removed
+        }
+        cur = &((*cur)->next);
+    }
+    LeaveCriticalSection(&g_topics_lock);
+    return 0;  // not found
+}
+
+static void send_group_list_to_user(const char *username) {
+    char buf[1024];
+    size_t offset = 0;
+
+    offset += _snprintf(buf + offset, sizeof(buf) - offset,
+                        "Current groups:\n");
+
+    EnterCriticalSection(&g_topics_lock);
+    Topic *t = g_topics;
+    while (t && offset < sizeof(buf)) {
+        if (strncmp(t->name, "group/", 6) == 0 && t->name[6] != '\0') {
+            const char *gname = t->name + 6;
+            offset += _snprintf(buf + offset, sizeof(buf) - offset,
+                                " - %s\n", gname);
+        }
+        t = t->next;
+    }
+    LeaveCriticalSection(&g_topics_lock);
+
+    send_server_pm(username, buf);
+}
+
 DWORD WINAPI client_thread(LPVOID arg) {
     SOCKET client_sock = *(SOCKET *)arg;
     free(arg);
@@ -609,11 +705,25 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 printf("[SERVER] Socket %d closed (register done, ask user to re-login)\n", (int)client_sock);
                 return 0;
             }
-            case LTM_JOIN_GRP:
+            case LTM_JOIN_GRP: {
+                if (!find_topic(hdr.target_id)) {
+                    char msg[256];
+                    const char *gname = hdr.target_id;
+                    if (strncmp(gname, "group/", 6) == 0 && gname[6] != '\0') {
+                        gname = gname + 6;
+                    }
+                    _snprintf(msg, sizeof(msg),
+                            "Group '%s' does not exist.\nUse /group %s to create it.\n",
+                            gname, gname);
+                    send_server_pm(hdr.sender_id, msg);
+                    break;
+                }
                 printf("[SERVER] %s joins group %s\n", hdr.sender_id, hdr.target_id);
-                subscribe_socket_to_topic(client_sock, hdr.target_id);
+                subscribe_socket_to_topic_existing(client_sock, hdr.target_id);
                 replay_history(client_sock, hdr.target_id);
                 break;
+            }
+
             case LTM_LEAVE_GRP:
                 printf("[SERVER] %s leaves group %s\n", hdr.sender_id, hdr.target_id);
                 unsubscribe_socket_from_topic(client_sock, hdr.target_id);
@@ -630,6 +740,50 @@ DWORD WINAPI client_thread(LPVOID arg) {
             case LTM_FILE_CHUNK:
                 handle_file_chunk(client_sock, &hdr, payload);
                 break;
+            case LTM_GROUP_CMD: {
+                const char *username = hdr.sender_id;
+                const char *cmd = payload;  // "CREATE" hoặc "REMOVE"
+
+                // target phải là "group/<name>"
+                if (strncmp(hdr.target_id, "group/", 6) != 0 || hdr.target_id[6] == '\0') {
+                    send_server_pm(username, "Invalid group name.\n");
+                    break;
+                }
+
+                if (strcmp(cmd, "CREATE") == 0) {
+                    if (find_topic(hdr.target_id)) {
+                        send_server_pm(username, "Group already exists.\n");
+                    } else {
+                        get_or_create_topic(hdr.target_id);
+                        char buf[256];
+                        _snprintf(buf, sizeof(buf),
+                                "Group '%s' created.\n", hdr.target_id + 6);
+                        send_server_pm(username, buf);
+                    }
+                    send_group_list_to_user(username);
+                } else if (strcmp(cmd, "REMOVE") == 0) {
+                    // không xoá group/global
+                    if (strcmp(hdr.target_id, "group/global") == 0) {
+                        send_server_pm(username,
+                                    "Cannot remove default group 'global'.\n");
+                        send_group_list_to_user(username);
+                        break;
+                    }
+
+                    if (remove_topic(hdr.target_id)) {
+                        char buf[256];
+                        _snprintf(buf, sizeof(buf),
+                                "Group '%s' removed.\n", hdr.target_id + 6);
+                        send_server_pm(username, buf);
+                    } else {
+                        send_server_pm(username, "Group not found.\n");
+                    }
+                    send_group_list_to_user(username);
+                } else {
+                    send_server_pm(username, "Unknown group command.\n");
+                }
+                break;
+            }
             default:
                 printf("[SERVER] Unknown packet type %d from %s\n",
                        hdr.type, hdr.sender_id);
