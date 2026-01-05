@@ -16,4 +16,7 @@ void file_handle_chunk(SOCKET sock, PacketHeader *hdr, const char *payload);
 // Hủy các upload đang dở dang của user khi disconnect
 void file_cancel_uploads(SOCKET sock);
 
+// Xử lý việc tải file về
+void file_handle_download(SOCKET sock, PacketHeader *hdr, const char *filename);
+
 #endif

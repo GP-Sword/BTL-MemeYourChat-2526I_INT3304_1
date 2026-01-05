@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "../libs/common/net_utils.h"
 
 typedef struct FileUpload {
     SOCKET sock;
@@ -52,7 +53,7 @@ void file_handle_meta(SOCKET sock, PacketHeader *hdr, const char *payload) {
     
     char path[260];
     time_t now = time(NULL);
-    snprintf(path, sizeof(path), "%s/%lld_%s", files_dir, (long long)now, fname);
+    snprintf(path, sizeof(path), "%s/%lld_%s_%s", files_dir, (long long)now, hdr->sender_id, fname);
 
     FILE *fp = fopen(path, "wb");
     if (!fp) {
@@ -73,8 +74,15 @@ void file_handle_meta(SOCKET sock, PacketHeader *hdr, const char *payload) {
     g_uploads = fu;
     LeaveCriticalSection(&g_uploads_lock);
 
+    char saved_filename[260];
+    char *p = strrchr(path, '/'); 
+    if (!p) p = strrchr(path, '\\');
+    strcpy(saved_filename, p ? p + 1 : path);
+
     char log_msg[512];
-    snprintf(log_msg, sizeof(log_msg), "[FILE_META] filename=%s saved=%s size=%llu", fname, path, size);
+    snprintf(log_msg, sizeof(log_msg), "File: %s (Size: %llu). To download: /download %s", 
+            fname, size, saved_filename);
+
     history_log(hdr->target_id, hdr->sender_id, "FILE", log_msg);
 
     topic_route_msg(sock, hdr, payload);
@@ -141,4 +149,51 @@ void file_cancel_uploads(SOCKET sock) {
         curr = curr->next;
     }
     LeaveCriticalSection(&g_uploads_lock);
+}
+
+void file_handle_download(SOCKET sock, PacketHeader *hdr, const char *filename) {
+    char files_dir[260];
+    history_make_paths(hdr->target_id, NULL, files_dir);
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", files_dir, filename);
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "File not found: %s", filename);
+        PacketHeader err = { LTM_ERROR, (uint32_t)strlen(err_msg), "", "SERVER" };
+        send_all(sock, &err, sizeof(err));
+        send_all(sock, err_msg, (int)err.payload_size);
+        return;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    unsigned long long size = (unsigned long long)ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    printf("[FILE] Sending file %s (%llu bytes) to client %d\n", filename, size, (int)sock);
+    
+    char meta_payload[512];
+    snprintf(meta_payload, sizeof(meta_payload), "%s|%llu", filename, size);
+
+    PacketHeader meta_hdr = { LTM_FILE_META, (uint32_t)strlen(meta_payload), "", "SERVER" };
+    strcpy(meta_hdr.target_id, hdr->target_id); 
+    strcpy(meta_hdr.sender_id, "SERVER");
+
+    send_all(sock, &meta_hdr, sizeof(meta_hdr));
+    send_all(sock, meta_payload, (int)meta_hdr.payload_size);
+
+    char buffer[MAX_PAYLOAD_SIZE];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+        PacketHeader chunk_hdr = { LTM_FILE_CHUNK, (uint32_t)n, "", "SERVER" };
+        strcpy(chunk_hdr.target_id, hdr->target_id);
+        
+        send_all(sock, &chunk_hdr, sizeof(chunk_hdr));
+        send_all(sock, buffer, (int)n);
+    }
+    
+    fclose(fp);
+    printf("[FILE] Sent complete: %s\n", path);
 }

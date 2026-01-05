@@ -17,6 +17,15 @@
 #define DEFAULT_PORT 910
 #define INPUT_BUF_SIZE 1024
 
+typedef struct {
+    int active;
+    FILE *fp;
+    unsigned long long expected_size;
+    unsigned long long received_size;
+    char filename[260];
+} FileDownloadState;
+
+static FileDownloadState g_dl_state = {0};
 static SOCKET g_sock = INVALID_SOCKET;
 static char g_user_id[MAX_ID_LEN] = {0};
 static char g_current_group[64] = "group/global"; // Mặc định chat vào global
@@ -38,80 +47,7 @@ static void get_current_time_str(char *out_buf, size_t buf_size) {
     strftime(out_buf, buf_size, "%H:%M:%S", tm_info);
 }
 
-DWORD WINAPI receiver_thread(LPVOID arg) {
-    (void)arg;
-
-    while (g_running) {
-        PacketHeader hdr;
-        if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
-            printf("[CLIENT] Disconnected from server.\n");
-            g_running = 0;
-            break;
-        }
-
-        if (hdr.payload_size > MAX_PAYLOAD_SIZE) {
-            printf("[CLIENT] Payload too large, disconnecting.\n");
-            g_running = 0;
-            break;
-        }
-
-        char payload[MAX_PAYLOAD_SIZE + 1];
-        memset(payload, 0, sizeof(payload));
-        if (hdr.payload_size > 0) {
-            if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
-                printf("[CLIENT] Failed to read payload.\n");
-                g_running = 0;
-                break;
-            }
-            payload[hdr.payload_size] = '\0';
-        }
-
-        switch (hdr.type) {
-            case LTM_MESSAGE:
-                // get time
-                char time_str[64];
-                get_current_time_str(time_str, sizeof(time_str));
-
-                printf("[%s] [%s -> %s] %s\n", time_str, hdr.sender_id, hdr.target_id, payload);
-                break;
-            case LTM_HISTORY:
-                // 1. timestamp
-                char *token = strtok(payload, "|");
-                if (!token) { printf("(HISTORY RAW) %s\n", payload); break; }
-                long long ts = _strtoi64(token, NULL, 10);
-
-                // 2. sender
-                token = strtok(NULL, "|");
-                char *sender = token ? token : "Unknown";
-
-                // 3. type
-                token = strtok(NULL, "|");
-                char *kind = token ? token : "MSG";
-
-                // 4. content
-                token = strtok(NULL, "");
-                char *content = token ? token : "";
-
-                // 5. convert time
-                char time_str_history[64];
-                format_time_str(ts, time_str_history, sizeof(time_str_history));
-
-                // 6. finalize
-                printf("[HISTORY] [%s] [%s] <%s>: %s\n", time_str_history, sender, kind, content);
-                
-                break;
-            case LTM_ERROR:
-                printf("[SERVER ERROR] %s\n", payload);
-                break;
-            default:
-                printf("[CLIENT] Packet type %d, payload: %s\n",
-                       hdr.type, payload);
-                break;
-        }
-    }
-
-    return 0;
-}
+// --- Network Functions ---
 
 static int connect_to_server(const char *ip, int port) {
     g_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -196,6 +132,19 @@ static int send_file_to_topic(const char *topic_id, const char *filepath) {
     return 0;
 }
 
+static int parse_file_meta(const char *payload, char *filename, size_t filename_len, unsigned long long *out_size) {
+    const char *sep = strchr(payload, '|');
+    if (!sep) return -1;
+
+    size_t fn_len = (size_t)(sep - payload);
+    if (fn_len >= filename_len) fn_len = filename_len - 1;
+    memcpy(filename, payload, fn_len);
+    filename[fn_len] = '\0';
+
+    *out_size = _strtoui64(sep + 1, NULL, 10);
+    return 0;
+}
+
 // --- Thread & Flow ---
 
 DWORD WINAPI receiver_thread(LPVOID arg) {
@@ -227,6 +176,44 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
                 }
                 break;
             }
+            case LTM_FILE_META: {
+                char fname[260];
+                unsigned long long size;
+                if (parse_file_meta(payload, fname, sizeof(fname), &size) == 0) {
+                    printf("[DOWNLOAD] Receiving '%s' (%llu bytes)...\n", fname, size);
+                    
+                    _mkdir("downloads");
+                    char path[300];
+                    snprintf(path, sizeof(path), "downloads/%s", fname);
+                    
+                    if (g_dl_state.active && g_dl_state.fp) fclose(g_dl_state.fp);
+                    
+                    g_dl_state.fp = fopen(path, "wb");
+                    if (g_dl_state.fp) {
+                        g_dl_state.active = 1;
+                        g_dl_state.expected_size = size;
+                        g_dl_state.received_size = 0;
+                        strcpy(g_dl_state.filename, fname);
+                    } else {
+                        printf("[DOWNLOAD] Error creating file %s\n", path);
+                    }
+                }
+                break;
+            }
+            case LTM_FILE_CHUNK: {
+                if (g_dl_state.active && g_dl_state.fp) {
+                    fwrite(payload, 1, hdr.payload_size, g_dl_state.fp);
+                    g_dl_state.received_size += hdr.payload_size;
+
+                    if (g_dl_state.received_size >= g_dl_state.expected_size) {
+                        printf("\n[DOWNLOAD] Finished: downloads/%s\n", g_dl_state.filename);
+                        fclose(g_dl_state.fp);
+                        g_dl_state.active = 0;
+                        g_dl_state.fp = NULL;
+                    }
+                }
+                break;
+            }
             case LTM_HISTORY:
                 printf("%s\n", payload);
                 break;
@@ -241,16 +228,16 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
 }
 
 static void show_help(void) {
-    printf("Commands:\n");
-    printf("  /help                     Display the commands again.\n");
-    printf("  /group <name>             Create group if needed, set as current, and server lists all groups.\n");
-    printf("  /removegroup <name>       Remove an existing group (except 'global') and list groups.\n");
-    printf("  /join <groupName>         Join an existing group (topic = group/<groupName>)\n");
-    printf("  /pm <userId> <message>    Private message (topic = user/<userId>)\n");
-    printf("  /filepm <userId> <path>   Send file privately to user\n");
-    printf("  /filegrp <group> <path>   Send file to group (topic = group/<group>)\n");
-    printf("  /quit                     Exit\n");
-    printf("  <text>                    Send to current group (default group/global)\n");
+    printf("\n--- COMMANDS ---\n");
+    printf(" /create <name>      Create a new group\n");
+    printf(" /join <name>        Join a group (and switch chat context)\n");
+    printf(" /leave <name>       Leave a group\n");
+    printf(" /list               List available groups\n");
+    printf(" /pm <user> <msg>    Private message\n");
+    printf(" /file <path>        Send file to current group\n");
+    printf(" /quit               Exit\n");
+    printf(" <text>              Send message to CURRENT GROUP (%s)\n", g_current_group);
+    printf("----------------\n");
 }
 
 // Xử lý logic Login/Register (giữ nguyên logic cũ nhưng làm gọn)
@@ -328,113 +315,107 @@ int main(int argc, char *argv[]) {
         if (strlen(input) == 0) continue;
 
         if (strncmp(input, "/quit", 5) == 0) {
-            g_running = 0;
-            break;
-        } else if (strncmp(input, "/join ", 6) == 0) {
-            char *group_name = input + 6;
-            if (*group_name == '\0') {
-                printf("Usage: /join <groupName>\n");
-                continue;
-            }
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
+            g_running = 0; break;
+        }
+        // --- GROUP COMMANDS ---
+        else if (strncmp(input, "/create ", 8) == 0) {
+            char target[MAX_ID_LEN];
+            snprintf(target, sizeof(target), "group/%s", input + 8);
+            send_packet(LTM_GROUP_CMD, target, "CREATE");
+        }
+        else if (strncmp(input, "/list", 5) == 0) {
+            send_packet(LTM_GROUP_CMD, "", "LIST");
+        }
+        else if (strncmp(input, "/join ", 6) == 0) {
+            char target[MAX_ID_LEN];
+            snprintf(target, sizeof(target), "group/%s", input + 6);
+            send_packet(LTM_JOIN_GRP, target, NULL);
+            
+            // AUTO-SWITCH Context
+            strcpy(g_current_group, target);
+            printf("[CLIENT] Switched context to %s\n", g_current_group);
+        }
+        else if (strncmp(input, "/leave ", 7) == 0) {
+            char target[MAX_ID_LEN];
+            snprintf(target, sizeof(target), "group/%s", input + 7);
+            send_packet(LTM_LEAVE_GRP, target, NULL);
 
-            if (send_packet(LTM_JOIN_GRP, topic_id, NULL) == 0) {
-                // server sẽ báo lỗi nếu group không tồn tại
-                strncpy(g_current_group, topic_id, sizeof(g_current_group) - 1);
-                g_current_group[sizeof(g_current_group) - 1] = '\0';
-                printf("[CLIENT] Joined group %s (current group set)\n", topic_id);
-            }
-        } else if (strncmp(input, "/help", 5) == 0) {
-            show_help();
-        } else if (strncmp(input, "/group ", 6) == 0) {
-            char *group_name = input + 7;
-            if (*group_name == '\0') {
-                printf("Usage: /group <groupName>\n");
-                continue;
-            }
-
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
-
-            // yêu cầu server tạo group (nếu chưa có) & gửi danh sách group
-            if (send_packet(LTM_GROUP_CMD, topic_id, "CREATE") != 0) {
-                printf("[CLIENT] Failed to send group create command.\n");
-            } else {
-                strncpy(g_current_group, topic_id, sizeof(g_current_group) - 1);
-                g_current_group[sizeof(g_current_group) - 1] = '\0';
-                printf("[CLIENT] Current group set to %s\n", g_current_group);
-                printf("[CLIENT] Server will list all groups in chat.\n");
-            }
-        } else if (strncmp(input, "/removegroup ", 13) == 0) {
-            char *group_name = input + 13;
-            if (*group_name == '\0') {
-                printf("Usage: /removegroup <groupName>\n");
-                continue;
-            }
-
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
-
-            if (send_packet(LTM_GROUP_CMD, topic_id, "REMOVE") != 0) {
-                printf("[CLIENT] Failed to send group remove command.\n");
-            } else {
-                printf("[CLIENT] Remove group request sent. Server will respond.\n");
-            }
-        } else if (strncmp(input, "/pm ", 4) == 0) {
-            char *rest = input + 4;
-            char *space = strchr(rest, ' ');
-            if (!space) {
-                printf("Usage: /pm <userId> <message>\n");
-                continue;
-            }
-            *space = '\0';
-            char *user_id = rest;
-            char *msg = space + 1;
-
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "user/%s", user_id);
-            if (send_packet(LTM_MESSAGE, topic_id, msg) != 0) {
-                printf("[CLIENT] Failed to send private message.\n");
-            }
-        } else if (strncmp(input, "/filepm ", 8) == 0) {
-            char *rest = input + 8;
-            char *space = strchr(rest, ' ');
-            if (!space) {
-                printf("Usage: /filepm <userId> <path>\n");
-                continue;
-            }
-            *space = '\0';
-            char *user_id = rest;
-            char *path = space + 1;
-
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "user/%s", user_id);
-            send_file_to_topic(topic_id, path);
-        } else if (strncmp(input, "/filegrp ", 9) == 0) {
-            char *rest = input + 9;
-            char *space = strchr(rest, ' ');
-            if (!space) {
-                printf("Usage: /filegrp <groupName> <path>\n");
-                continue;
-            }
-            *space = '\0';
-            char *group_name = rest;
-            char *path = space + 1;
-
-            char topic_id[MAX_ID_LEN];
-            _snprintf(topic_id, sizeof(topic_id), "group/%s", group_name);
-            send_file_to_topic(topic_id, path);
-        } else if (input[0] == '\0') {
-            continue;
-        } else {
-            if (send_packet(LTM_MESSAGE, g_current_group, input) != 0) {
-                printf("[CLIENT] Failed to send message.\n");
+            // Nếu rời nhóm đang chat -> về global
+            if (strcmp(g_current_group, target) == 0) {
+                strcpy(g_current_group, "group/global");
+                printf("[CLIENT] Left current group. Back to group/global.\n");
             }
         }
-         if (strncmp(input, "/file ", 6) == 0) {
+        // --- MESSAGING ---
+        else if (strncmp(input, "/pm ", 4) == 0) {
+            char *user = input + 4;
+            char *msg = strchr(user, ' ');
+            if (msg) {
+                *msg = '\0'; msg++;
+                char target[MAX_ID_LEN];
+                snprintf(target, sizeof(target), "user/%s", user);
+                send_packet(LTM_MESSAGE, target, msg);
+            } else {
+                printf("Usage: /pm <user> <msg>\n");
+            }
+        }
+        else if (strncmp(input, "/file ", 6) == 0) {
              // Gửi file vào nhóm hiện tại
              send_file_to_topic(g_current_group, input + 6);
+        }
+        else if (strncmp(input, "/download ", 10) == 0) {
+            char *filename = input + 10;
+            strip_newline(filename);
+            if (strlen(filename) == 0) {
+                printf("Usage: /download <filename_on_server>\n");
+                continue;
+            }
+            // Gửi yêu cầu download với target là group hiện tại
+            send_packet(LTM_DOWNLOAD, g_current_group, filename);
+            printf("[CLIENT] Requesting file: %s from %s...\n", filename, g_current_group);
+        }
+        else if (strncmp(input, "/filepm ", 8) == 0) {
+            char *rest = input + 8;
+            char *space = strchr(rest, ' ');
+            
+            if (!space) {
+                printf("Usage: /filepm <username> <path>\n");
+                continue;
+            }
+
+            *space = '\0'; // Cắt chuỗi: biến rest thành username
+            char *user_id = rest;
+            char *path = space + 1; // Phần còn lại là đường dẫn
+            
+            strip_newline(path); // Xóa ký tự xuống dòng thừa nếu có
+
+            if (strlen(user_id) == 0 || strlen(path) == 0) {
+                printf("Invalid format. Usage: /filepm <username> <path>\n");
+                continue;
+            }
+
+            // Tạo target_id theo định dạng "user/TÊN_NGƯỜI_NHẬN"
+            char target[MAX_ID_LEN];
+            snprintf(target, sizeof(target), "user/%s", user_id);
+
+            printf("[CLIENT] Sending private file to %s...\n", user_id);
+            if (send_file_to_topic(target, path) == 0) {
+                printf("[CLIENT] File sent privately to %s.\n", user_id);
+            } else {
+                printf("[CLIENT] Failed to send file.\n");
+            }
+        }
+        else if (strncmp(input, "/dlpm ", 6) == 0) {
+            char *filename = input + 6;
+            strip_newline(filename);
+            
+            // Khi tải file PM, target_id chính là user ID của mình ("user/toi")
+            char my_inbox[MAX_ID_LEN];
+            snprintf(my_inbox, sizeof(my_inbox), "user/%s", g_user_id);
+            
+            // Gửi lệnh DOWNLOAD với target là inbox cá nhân
+            send_packet(LTM_DOWNLOAD, my_inbox, filename);
+            printf("[CLIENT] Requesting file %s from my inbox...\n", filename);
         }
         // --- NORMAL CHAT ---
         else {

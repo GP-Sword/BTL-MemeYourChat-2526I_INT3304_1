@@ -1,2 +1,2 @@
-gcc server/server.c server/topic_svc.c server/history.c server/file_svc.c libs/net_utils.c libs/sqlite.c libs/sqlite3.c -o server_chat.exe -lws2_32
-gcc client/client.c libs/net_utils.c -o client_chat.exe -lws2_32
+gcc server/server.c server/topic_svc.c server/history.c server/file_svc.c libs/common/net_utils.c libs/common/sqlite.c libs/common/sqlite3.c -o server_chat.exe -lws2_32
+gcc client/client.c libs/common/net_utils.c -o client_chat.exe -lws2_32
