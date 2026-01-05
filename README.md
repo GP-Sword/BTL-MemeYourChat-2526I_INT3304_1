@@ -44,15 +44,12 @@ Project/
 
 ## 3. How to run
 # 3.1. Backend
-Chỉnh lại include path của server.c. vì lí do nào đấy t k chạy dc khi để relative path.
-1. gcc server/server.c common/net_utils.c common/sqlite.c common/sqlite3.c `
-  -o server_chat.exe `
-  -lws2_32
+
 1. gcc server/server.c common/net_utils.c common/sqlite.c common/sqlite3.c -o server_chat.exe -lws2_32
 2. gcc client/client.c common/net_utils.c -o client_chat.exe -lws2_32
 3. Terminal 1: .\server_chat.exe 910
-4. Terminal 2: .\client_chat.exe 127.0.0.1 910 đặt tên gì đó
-5. Terminal 3: .\client_chat.exe 127.0.0.1 910 đặt tên gì đó khác
+4. Terminal 2: .\client_chat.exe 127.0.0.1 910 \[username_1\]
+5. Terminal 3: .\client_chat.exe 127.0.0.1 910 \[username_2\]
 
 Expected output:
 ```
@@ -74,7 +71,6 @@ yeah
 
 
 send file (no quotation marks)
-
 /filegrp global C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\gay.txt
 ```
 

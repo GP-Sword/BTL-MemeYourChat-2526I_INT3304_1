@@ -11,8 +11,8 @@
 #include <Ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
 
-#include "../common/protocol.h"
-#include "../common/net_utils.h"
+#include "../libs/protocol.h"
+#include "../libs/net_utils.h"
 
 #define DEFAULT_PORT 910
 #define INPUT_BUF_SIZE 1024
@@ -61,6 +61,20 @@ static void strip_newline(char *s) {
     }
 }
 
+
+static void format_time_str(long long timestamp, char *out_buf, size_t buf_size) {
+    time_t t = (time_t)timestamp;
+    struct tm *tm_info = localtime(&t);
+    // Format: HH:MM:SS - DD/MM/YYYY
+    strftime(out_buf, buf_size, "%H:%M:%S - %d/%m/%Y", tm_info);
+}
+
+static void get_current_time_str(char *out_buf, size_t buf_size) {
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    strftime(out_buf, buf_size, "%H:%M:%S - %d/%m/%Y", tm_info);
+}
+
 DWORD WINAPI receiver_thread(LPVOID arg) {
     (void)arg;
 
@@ -91,10 +105,37 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
 
         switch (hdr.type) {
             case LTM_MESSAGE:
-                printf("[%s -> %s] %s\n", hdr.sender_id, hdr.target_id, payload);
+                // get time
+                char time_str[64];
+                get_current_time_str(time_str, sizeof(time_str));
+
+                printf("[%s] [%s -> %s] %s\n", time_str, hdr.sender_id, hdr.target_id, payload);
                 break;
             case LTM_HISTORY:
-                printf("(HISTORY) %s\n", payload);
+                // 1. timestamp
+                char *token = strtok(payload, "|");
+                if (!token) { printf("(HISTORY RAW) %s\n", payload); break; }
+                long long ts = _strtoi64(token, NULL, 10);
+
+                // 2. sender
+                token = strtok(NULL, "|");
+                char *sender = token ? token : "Unknown";
+
+                // 3. type
+                token = strtok(NULL, "|");
+                char *kind = token ? token : "MSG";
+
+                // 4. content
+                token = strtok(NULL, "");
+                char *content = token ? token : "";
+
+                // 5. convert time
+                char time_str_history[64];
+                format_time_str(ts, time_str_history, sizeof(time_str_history));
+
+                // 6. finalize
+                printf("[HISTORY] [%s] [%s] <%s>: %s\n", time_str_history, sender, kind, content);
+                
                 break;
             case LTM_ERROR:
                 printf("[SERVER ERROR] %s\n", payload);
