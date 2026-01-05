@@ -1,6 +1,10 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 #define MAX_ID_LEN 32
@@ -29,6 +33,10 @@ typedef struct {
     char target_id[MAX_ID_LEN]; // user/ hoặc group chat/
     char sender_id[MAX_ID_LEN]; // user id người gửi
 } PacketHeader;
+
+#ifdef __cplusplus
+}
+#endif
 
 #pragma pack(pop)
 #endif
