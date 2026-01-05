@@ -17,6 +17,15 @@
 #define DEFAULT_PORT 910
 #define INPUT_BUF_SIZE 1024
 
+typedef struct {
+    int active;
+    FILE *fp;
+    unsigned long long expected_size;
+    unsigned long long received_size;
+    char filename[260];
+} FileDownloadState;
+
+static FileDownloadState g_dl_state = {0};
 static SOCKET g_sock = INVALID_SOCKET;
 static char g_user_id[MAX_ID_LEN] = {0};
 static char g_current_group[64] = "group/global"; // Mặc định chat vào global
@@ -123,6 +132,19 @@ static int send_file_to_topic(const char *topic_id, const char *filepath) {
     return 0;
 }
 
+static int parse_file_meta(const char *payload, char *filename, size_t filename_len, unsigned long long *out_size) {
+    const char *sep = strchr(payload, '|');
+    if (!sep) return -1;
+
+    size_t fn_len = (size_t)(sep - payload);
+    if (fn_len >= filename_len) fn_len = filename_len - 1;
+    memcpy(filename, payload, fn_len);
+    filename[fn_len] = '\0';
+
+    *out_size = _strtoui64(sep + 1, NULL, 10);
+    return 0;
+}
+
 // --- Thread & Flow ---
 
 DWORD WINAPI receiver_thread(LPVOID arg) {
@@ -151,6 +173,44 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
                      printf("[%s] [%s] %s: %s\n", time_str, hdr.target_id, hdr.sender_id, payload);
                 } else {
                      printf("[%s] %s: %s\n", time_str, hdr.sender_id, payload);
+                }
+                break;
+            }
+            case LTM_FILE_META: {
+                char fname[260];
+                unsigned long long size;
+                if (parse_file_meta(payload, fname, sizeof(fname), &size) == 0) {
+                    printf("[DOWNLOAD] Receiving '%s' (%llu bytes)...\n", fname, size);
+                    
+                    _mkdir("downloads");
+                    char path[300];
+                    snprintf(path, sizeof(path), "downloads/%s", fname);
+                    
+                    if (g_dl_state.active && g_dl_state.fp) fclose(g_dl_state.fp);
+                    
+                    g_dl_state.fp = fopen(path, "wb");
+                    if (g_dl_state.fp) {
+                        g_dl_state.active = 1;
+                        g_dl_state.expected_size = size;
+                        g_dl_state.received_size = 0;
+                        strcpy(g_dl_state.filename, fname);
+                    } else {
+                        printf("[DOWNLOAD] Error creating file %s\n", path);
+                    }
+                }
+                break;
+            }
+            case LTM_FILE_CHUNK: {
+                if (g_dl_state.active && g_dl_state.fp) {
+                    fwrite(payload, 1, hdr.payload_size, g_dl_state.fp);
+                    g_dl_state.received_size += hdr.payload_size;
+
+                    if (g_dl_state.received_size >= g_dl_state.expected_size) {
+                        printf("\n[DOWNLOAD] Finished: downloads/%s\n", g_dl_state.filename);
+                        fclose(g_dl_state.fp);
+                        g_dl_state.active = 0;
+                        g_dl_state.fp = NULL;
+                    }
                 }
                 break;
             }
@@ -302,6 +362,60 @@ int main(int argc, char *argv[]) {
         else if (strncmp(input, "/file ", 6) == 0) {
              // Gửi file vào nhóm hiện tại
              send_file_to_topic(g_current_group, input + 6);
+        }
+        else if (strncmp(input, "/download ", 10) == 0) {
+            char *filename = input + 10;
+            strip_newline(filename);
+            if (strlen(filename) == 0) {
+                printf("Usage: /download <filename_on_server>\n");
+                continue;
+            }
+            // Gửi yêu cầu download với target là group hiện tại
+            send_packet(LTM_DOWNLOAD, g_current_group, filename);
+            printf("[CLIENT] Requesting file: %s from %s...\n", filename, g_current_group);
+        }
+        else if (strncmp(input, "/filepm ", 8) == 0) {
+            char *rest = input + 8;
+            char *space = strchr(rest, ' ');
+            
+            if (!space) {
+                printf("Usage: /filepm <username> <path>\n");
+                continue;
+            }
+
+            *space = '\0'; // Cắt chuỗi: biến rest thành username
+            char *user_id = rest;
+            char *path = space + 1; // Phần còn lại là đường dẫn
+            
+            strip_newline(path); // Xóa ký tự xuống dòng thừa nếu có
+
+            if (strlen(user_id) == 0 || strlen(path) == 0) {
+                printf("Invalid format. Usage: /filepm <username> <path>\n");
+                continue;
+            }
+
+            // Tạo target_id theo định dạng "user/TÊN_NGƯỜI_NHẬN"
+            char target[MAX_ID_LEN];
+            snprintf(target, sizeof(target), "user/%s", user_id);
+
+            printf("[CLIENT] Sending private file to %s...\n", user_id);
+            if (send_file_to_topic(target, path) == 0) {
+                printf("[CLIENT] File sent privately to %s.\n", user_id);
+            } else {
+                printf("[CLIENT] Failed to send file.\n");
+            }
+        }
+        else if (strncmp(input, "/dlpm ", 6) == 0) {
+            char *filename = input + 6;
+            strip_newline(filename);
+            
+            // Khi tải file PM, target_id chính là user ID của mình ("user/toi")
+            char my_inbox[MAX_ID_LEN];
+            snprintf(my_inbox, sizeof(my_inbox), "user/%s", g_user_id);
+            
+            // Gửi lệnh DOWNLOAD với target là inbox cá nhân
+            send_packet(LTM_DOWNLOAD, my_inbox, filename);
+            printf("[CLIENT] Requesting file %s from my inbox...\n", filename);
         }
         // --- NORMAL CHAT ---
         else {

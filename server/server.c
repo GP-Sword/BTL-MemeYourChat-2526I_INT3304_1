@@ -155,6 +155,12 @@ DWORD WINAPI client_thread(LPVOID arg) {
             case LTM_FILE_CHUNK:
                 file_handle_chunk(s, &hdr, payload);
                 break;
+            case LTM_DOWNLOAD:
+                // hdr.target_id phải là nơi chứa file đó (client phải gửi đúng)
+                printf("[SERVER] Download request from %s for %s in %s\n", 
+                       hdr.sender_id, payload, hdr.target_id);
+                file_handle_download(s, &hdr, payload);
+                break;
         }
     }
 

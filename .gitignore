@@ -44,8 +44,12 @@
 # debug information files
 *.dwo
 
-#Folder
+# Folder
 build/
 .cache/
 .vscode/
 resources/*
+downloads/*
+
+# log file
+*.log
