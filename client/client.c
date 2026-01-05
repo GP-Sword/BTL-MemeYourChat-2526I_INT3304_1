@@ -11,47 +11,18 @@
 #include <Ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
 
-#include "../libs/protocol.h"
-#include "../libs/net_utils.h"
+#include "../libs/common/protocol.h"
+#include "../libs/common/net_utils.h"
 
 #define DEFAULT_PORT 910
 #define INPUT_BUF_SIZE 1024
 
 static SOCKET g_sock = INVALID_SOCKET;
 static char g_user_id[MAX_ID_LEN] = {0};
-static char g_current_group[64] = "group/global";
+static char g_current_group[64] = "group/global"; // Mặc định chat vào global
 static volatile int g_running = 1;
-static int g_auth_done = 0;
 
-typedef struct {
-    int active;
-    FILE *fp;
-    unsigned long long expected_size;
-    unsigned long long received_size;
-    char filename[260];
-} FileDownloadState;
-
-static FileDownloadState g_file_download = {0};
-
-static void ensure_download_dir(void) {
-    _mkdir("downloads");
-}
-//client reuse
-static int parse_file_meta(const char *payload,
-                           char *filename,
-                           size_t filename_len,
-                           unsigned long long *out_size) {
-    const char *sep = strchr(payload, '|');
-    if (!sep) return -1;
-
-    size_t fn_len = (size_t)(sep - payload);
-    if (fn_len >= filename_len) fn_len = filename_len - 1;
-    memcpy(filename, payload, fn_len);
-    filename[fn_len] = '\0';
-
-    *out_size = _strtoui64(sep + 1, NULL, 10);
-    return 0;
-}
+// --- Helper Functions ---
 
 static void strip_newline(char *s) {
     size_t len = strlen(s);
@@ -61,18 +32,10 @@ static void strip_newline(char *s) {
     }
 }
 
-
-static void format_time_str(long long timestamp, char *out_buf, size_t buf_size) {
-    time_t t = (time_t)timestamp;
-    struct tm *tm_info = localtime(&t);
-    // Format: HH:MM:SS - DD/MM/YYYY
-    strftime(out_buf, buf_size, "%H:%M:%S - %d/%m/%Y", tm_info);
-}
-
 static void get_current_time_str(char *out_buf, size_t buf_size) {
     time_t t = time(NULL);
     struct tm *tm_info = localtime(&t);
-    strftime(out_buf, buf_size, "%H:%M:%S - %d/%m/%Y", tm_info);
+    strftime(out_buf, buf_size, "%H:%M:%S", tm_info);
 }
 
 DWORD WINAPI receiver_thread(LPVOID arg) {
@@ -152,28 +115,18 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
 
 static int connect_to_server(const char *ip, int port) {
     g_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (g_sock == INVALID_SOCKET) {
-        printf("socket() failed: %d\n", WSAGetLastError());
-        return -1;
-    }
+    if (g_sock == INVALID_SOCKET) return -1;
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short)port);
-
-    if (inet_pton(AF_INET, ip, &addr.sin_addr) <= 0) {
-        printf("inet_pton() failed\n");
-        closesocket(g_sock);
-        return -1;
-    }
+    inet_pton(AF_INET, ip, &addr.sin_addr);
 
     if (connect(g_sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        printf("connect() failed: %d\n", WSAGetLastError());
         closesocket(g_sock);
         return -1;
     }
-
     printf("[CLIENT] Connected to %s:%d\n", ip, port);
     return 0;
 }
@@ -181,20 +134,19 @@ static int connect_to_server(const char *ip, int port) {
 static int send_packet(PacketType type, const char *target_id, const char *payload) {
     PacketHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
-
     hdr.type = (uint8_t)type;
-    if (payload) {
-        hdr.payload_size = (uint32_t)strlen(payload);
-    } else {
-        hdr.payload_size = 0;
-    }
+    
+    // Xử lý payload
+    if (payload) hdr.payload_size = (uint32_t)strlen(payload);
+    else hdr.payload_size = 0;
 
+    // Xử lý target_id (nếu có)
     if (target_id) {
         strncpy(hdr.target_id, target_id, MAX_ID_LEN - 1);
-        hdr.target_id[MAX_ID_LEN - 1] = '\0';
     }
+    
+    // Luôn gửi sender_id là user hiện tại
     strncpy(hdr.sender_id, g_user_id, MAX_ID_LEN - 1);
-    hdr.sender_id[MAX_ID_LEN - 1] = '\0';
 
     if (send_all(g_sock, &hdr, (int)sizeof(hdr)) < 0) return -1;
     if (hdr.payload_size > 0 && payload) {
@@ -206,67 +158,85 @@ static int send_packet(PacketType type, const char *target_id, const char *paylo
 static int send_file_to_topic(const char *topic_id, const char *filepath) {
     FILE *fp = fopen(filepath, "rb");
     if (!fp) {
-        printf("[CLIENT] Cannot open this file: %s\n", filepath);
+        printf("[CLIENT] Error: Cannot open file %s\n", filepath);
         return -1;
     }
-    const char *p = filepath;
-    const char *last_sep = filepath;
+    
+    // Lấy tên file từ đường dẫn
+    const char *p = filepath, *filename = filepath;
     while (*p) {
-        if (*p == '/' || *p == '\\') {
-            last_sep = p + 1;
-        }
+        if (*p == '/' || *p == '\\') filename = p + 1;
         p++;
     }
-    const char *filename = last_sep;
 
     fseek(fp, 0, SEEK_END);
-    long size_long = ftell(fp);
+    unsigned long long total_size = (unsigned long long)ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    if (size_long < 0) {
-        printf("[CLIENT] ftell failed.\n");
-        fclose(fp);
-        return -1;
-    }
-    unsigned long long total_size = (unsigned long long)size_long;
 
+    // Gửi META
     char meta_payload[512];
-    _snprintf(meta_payload, sizeof(meta_payload),
-              "%s|%llu", filename, total_size);
+    snprintf(meta_payload, sizeof(meta_payload), "%s|%llu", filename, total_size);
+    send_packet(LTM_FILE_META, topic_id, meta_payload);
 
-    if (send_packet(LTM_FILE_META, topic_id, meta_payload) != 0) {
-        printf("[CLIENT] Failed to send FILE_META.\n");
-        fclose(fp);
-        return -1;
-    }
-
-    // gửi các CHUNK binary
+    // Gửi CHUNK
     char buffer[MAX_PAYLOAD_SIZE];
     size_t n;
     while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
-        PacketHeader hdr;
-        memset(&hdr, 0, sizeof(hdr));
-        hdr.type = (uint8_t)LTM_FILE_CHUNK;
+        PacketHeader hdr = {0};
+        hdr.type = LTM_FILE_CHUNK;
         hdr.payload_size = (uint32_t)n;
         strncpy(hdr.target_id, topic_id, MAX_ID_LEN - 1);
-        hdr.target_id[MAX_ID_LEN - 1] = '\0';
         strncpy(hdr.sender_id, g_user_id, MAX_ID_LEN - 1);
-        hdr.sender_id[MAX_ID_LEN - 1] = '\0';
 
-        if (send_all(g_sock, &hdr, (int)sizeof(hdr)) < 0) {
-            printf("[CLIENT] Failed to send FILE_CHUNK header.\n");
-            fclose(fp);
-            return -1;
+        send_all(g_sock, &hdr, sizeof(hdr));
+        send_all(g_sock, buffer, (int)n);
+    }
+    fclose(fp);
+    printf("[CLIENT] File sent to %s\n", topic_id);
+    return 0;
+}
+
+// --- Thread & Flow ---
+
+DWORD WINAPI receiver_thread(LPVOID arg) {
+    (void)arg;
+    while (g_running) {
+        PacketHeader hdr;
+        if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
+            printf("\n[CLIENT] Server disconnected.\n");
+            g_running = 0; break;
         }
-        if (send_all(g_sock, buffer, (int)n) < 0) {
-            printf("[CLIENT] Failed to send FILE_CHUNK data.\n");
-            fclose(fp);
-            return -1;
+
+        if (hdr.payload_size > MAX_PAYLOAD_SIZE) break; 
+        
+        char payload[MAX_PAYLOAD_SIZE + 1] = {0};
+        if (hdr.payload_size > 0) {
+            if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) break;
+            payload[hdr.payload_size] = '\0';
+        }
+
+        switch (hdr.type) {
+            case LTM_MESSAGE: {
+                char time_str[64];
+                get_current_time_str(time_str, sizeof(time_str));
+                // Nếu tin nhắn đến từ group khác group đang xem, hiện rõ tên group
+                if (strcmp(hdr.target_id, g_current_group) != 0 && strncmp(hdr.target_id, "group/", 6) == 0) {
+                     printf("[%s] [%s] %s: %s\n", time_str, hdr.target_id, hdr.sender_id, payload);
+                } else {
+                     printf("[%s] %s: %s\n", time_str, hdr.sender_id, payload);
+                }
+                break;
+            }
+            case LTM_HISTORY:
+                printf("%s\n", payload);
+                break;
+            case LTM_ERROR:
+                printf("[SERVER ERROR] %s\n", payload);
+                break;
+            default:
+                break;
         }
     }
-
-    fclose(fp);
-    printf("[CLIENT] File sent to %s: %s (%llu bytes)\n",
-           topic_id, filepath, total_size);
     return 0;
 }
 
@@ -283,248 +253,79 @@ static void show_help(void) {
     printf("  <text>                    Send to current group (default group/global)\n");
 }
 
-static int login_register_flow(const char *server_ip, int port) {
+// Xử lý logic Login/Register (giữ nguyên logic cũ nhưng làm gọn)
+static int auth_flow(const char *ip, int port) {
     while (1) {
-        // 1) Nhập username
-        printf("Enter your user ID: ");
-        if (!fgets(g_user_id, sizeof(g_user_id), stdin)) {
-            return -1;
-        }
+        printf("Username: ");
+        if (!fgets(g_user_id, sizeof(g_user_id), stdin)) return -1;
         strip_newline(g_user_id);
-        if (g_user_id[0] == '\0') {
-            printf("Username cannot be empty.\n");
-            continue;
+        if (strlen(g_user_id) == 0) continue;
+
+        if (connect_to_server(ip, port) != 0) {
+            printf("Connection failed.\n"); return -1;
         }
 
-        // 2) Kết nối tới server
-        if (connect_to_server(server_ip, port) != 0) {
-            printf("Cannot connect to server.\n");
-            return -1;
-        }
-
-        // 3) Gửi LOGIN mode=CHECK để hỏi server "user tồn tại không?"
-        char check_payload[32] = "CHECK";
-        if (send_packet(LTM_LOGIN, NULL, check_payload) != 0) {
-            printf("Failed to send CHECK login.\n");
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            return -1;
-        }
-
-        // 4) Đọc 1 packet trả lời (blocking)
+        // 1. Check user
+        send_packet(LTM_LOGIN, NULL, "CHECK");
+        
         PacketHeader hdr;
-        if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
-            printf("Failed to receive response for CHECK.\n");
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            return -1;
-        }
+        char buf[MAX_PAYLOAD_SIZE + 1] = {0};
+        recv_all(g_sock, &hdr, sizeof(hdr));
+        if (hdr.payload_size) recv_all(g_sock, buf, hdr.payload_size);
 
-        char payload[MAX_PAYLOAD_SIZE + 1];
-        memset(payload, 0, sizeof(payload));
-        if (hdr.payload_size > 0) {
-            if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
-                printf("Failed to read payload.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                return -1;
-            }
-            payload[hdr.payload_size] = '\0';
-        }
+        int exists = (strcmp(buf, "USER_EXISTS") == 0);
+        printf("%s. Enter password: ", exists ? "User found" : "New user");
+        
+        char pw[64];
+        fgets(pw, sizeof(pw), stdin);
+        strip_newline(pw);
 
-        int user_exists = 0;
-        if (hdr.type == LTM_ERROR && strcmp(payload, "USER_EXISTS") == 0) {
-            user_exists = 1;
-            printf("User exists. Please enter your password.\n");
-        } else if (hdr.type == LTM_ERROR && strcmp(payload, "USER_NOT_EXISTS") == 0) {
-            user_exists = 0;
-            printf("User does not exist. Enter password to register new user.\n");
-        } else {
-            printf("Unexpected response from server during CHECK: type=%d payload=%s\n",
-                   hdr.type, payload);
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            return -1;
-        }
-
-        // 5) Nhập password
-        char password[64];
-        printf("Password: ");
-        if (!fgets(password, sizeof(password), stdin)) {
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            return -1;
-        }
-        strip_newline(password);
-
-        size_t pwlen = strlen(password);
-        if (pwlen < 8 || pwlen > 12) {
-            printf("Password length must be 8-12 characters.\n");
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            continue; // quay lại từ đầu, hỏi username lại
-        }
-
-        if (user_exists) {
-            // 6A) LOGIN mode
+        // 2. Send Login or Register
+        if (exists) {
             char login_payload[128];
-            _snprintf(login_payload, sizeof(login_payload),
-                      "LOGIN|%s", password);
-
-            if (send_packet(LTM_LOGIN, NULL, login_payload) != 0) {
-                printf("Failed to send LOGIN.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                return -1;
-            }
-
-            // Chờ ack hoặc error
-            if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
-                printf("Failed to receive LOGIN response.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                return -1;
-            }
-
-            memset(payload, 0, sizeof(payload));
-            if (hdr.payload_size > 0) {
-                if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
-                    printf("Failed to read LOGIN payload.\n");
-                    closesocket(g_sock);
-                    g_sock = INVALID_SOCKET;
-                    return -1;
-                }
-                payload[hdr.payload_size] = '\0';
-            }
-
-            if (hdr.type == LTM_ERROR) {
-                if (strcmp(payload, "INVALID_PASSWORD") == 0) {
-                    printf("Invalid password.\n");
-                } else if (strcmp(payload, "BAD_PASSWORD_LENGTH") == 0) {
-                    printf("Password length must be 8-12 characters.\n");
-                } else if (strcmp(payload, "USER_NOT_EXISTS") == 0) {
-                    printf("User no longer exists.\n");
-                } else {
-                    printf("Login error: %s\n", payload);
-                }
-
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-
-                char c[8];
-                printf("Try again? (y/n): ");
-                if (!fgets(c, sizeof(c), stdin)) return -1;
-                if (c[0] != 'y' && c[0] != 'Y') {
-                    return -1; // user không muốn thử nữa
-                }
-                continue; // quay lại từ đầu hỏi username
-            }
-
-            if (hdr.type == LTM_LOGIN) {
-                // LOGIN OK – g_sock vẫn mở và sẽ dùng cho chat
-                printf("[CLIENT] Logged in as %s. Current group: %s\n",
-                       g_user_id, g_current_group);
-                show_help();
-                return 0;
-            }
-
-            printf("Unexpected packet after LOGIN: type=%d\n", hdr.type);
-            closesocket(g_sock);
-            g_sock = INVALID_SOCKET;
-            return -1;
+            snprintf(login_payload, sizeof(login_payload), "LOGIN|%s", pw);
+            send_packet(LTM_LOGIN, NULL, login_payload);
         } else {
-            // 6B) REGISTER mode
-            if (send_packet(LTM_REGISTER, NULL, password) != 0) {
-                printf("Failed to send REGISTER.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                return -1;
-            }
-
-            if (recv_all(g_sock, &hdr, sizeof(PacketHeader)) < 0) {
-                printf("Failed to receive REGISTER response.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                return -1;
-            }
-
-            memset(payload, 0, sizeof(payload));
-            if (hdr.payload_size > 0) {
-                if (recv_all(g_sock, payload, (int)hdr.payload_size) < 0) {
-                    printf("Failed to read REGISTER payload.\n");
-                    closesocket(g_sock);
-                    g_sock = INVALID_SOCKET;
-                    return -1;
-                }
-                payload[hdr.payload_size] = '\0';
-            }
-
-            if (hdr.type == LTM_ERROR && strcmp(payload, "REGISTER_OK") == 0) {
-                printf("Registration success. Please login again.\n");
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                continue; // quay lại vòng while, nhập username + login
-            } else {
-                printf("Register error: %s\n", payload);
-                closesocket(g_sock);
-                g_sock = INVALID_SOCKET;
-                char c[8];
-                printf("Try again? (y/n): ");
-                if (!fgets(c, sizeof(c), stdin)) return -1;
-                if (c[0] != 'y' && c[0] != 'Y') {
-                    return -1;
-                }
-                continue;
-            }
+            send_packet(LTM_REGISTER, NULL, pw);
         }
+
+        // 3. Get Result
+        memset(&hdr, 0, sizeof(hdr));
+        memset(buf, 0, sizeof(buf));
+        recv_all(g_sock, &hdr, sizeof(hdr));
+        if (hdr.payload_size) recv_all(g_sock, buf, hdr.payload_size);
+
+        if (hdr.type == LTM_LOGIN || (hdr.type == LTM_ERROR && strcmp(buf, "REGISTER_OK") == 0)) {
+            if (hdr.type == LTM_LOGIN) {
+                printf("Login successful!\n");
+                return 0; // Success
+            }
+            printf("Registered. Please login again.\n");
+        } else {
+            printf("Auth failed: %s\n", buf);
+        }
+        closesocket(g_sock);
     }
 }
 
 int main(int argc, char *argv[]) {
-    char server_ip[64] = "127.0.0.1";
+    char ip[64] = "127.0.0.1";
     int port = DEFAULT_PORT;
+    if (argc >= 2) strcpy(ip, argv[1]);
+    
+    // Init WSA
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
 
-    if (argc >= 2) {
-        strncpy(server_ip, argv[1], sizeof(server_ip) - 1);
-        server_ip[sizeof(server_ip) - 1] = '\0';
-    }
-    if (argc >= 3) {
-        port = atoi(argv[2]);
-    }
+    if (auth_flow(ip, port) != 0) return 0;
 
-    // Init Winsock
-    WSADATA wsaData;
-    int wsa_err = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsa_err != 0) {
-        printf("WSAStartup failed: %d\n", wsa_err);
-        return 1;
-    }
-
-    if (login_register_flow(server_ip, port) != 0) {
-        WSACleanup();
-        return 0; // user logout hoặc fail
-    }
-
-    // login OK, g_sock đã connected + server đã auto-sub + replay history
-    // start receiver_thread and begin chat loop
-
-    HANDLE hThread = CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
-    if (hThread == NULL) {
-        printf("CreateThread failed\n");
-        closesocket(g_sock);
-        WSACleanup();
-        return 1;
-    }
-    CloseHandle(hThread);
+    // Start Chat
+    CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
+    show_help();
 
     char input[INPUT_BUF_SIZE];
-
     while (g_running && fgets(input, sizeof(input), stdin)) {
-        size_t in_len = strlen(input);
-        if (in_len > 0 &&
-            (input[in_len - 1] == '\n' || input[in_len - 1] == '\r')) {
-            input[in_len - 1] = '\0';
-        }
+        strip_newline(input);
+        if (strlen(input) == 0) continue;
 
         if (strncmp(input, "/quit", 5) == 0) {
             g_running = 0;
@@ -631,9 +432,17 @@ int main(int argc, char *argv[]) {
                 printf("[CLIENT] Failed to send message.\n");
             }
         }
+         if (strncmp(input, "/file ", 6) == 0) {
+             // Gửi file vào nhóm hiện tại
+             send_file_to_topic(g_current_group, input + 6);
+        }
+        // --- NORMAL CHAT ---
+        else {
+            // Gửi tin nhắn vào g_current_group
+            send_packet(LTM_MESSAGE, g_current_group, input);
+        }
     }
 
-    printf("[CLIENT] Exiting...\n");
     closesocket(g_sock);
     WSACleanup();
     return 0;
