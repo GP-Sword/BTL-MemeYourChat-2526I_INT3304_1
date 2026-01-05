@@ -37,4 +37,5 @@ yeah
 
 send file (no quotation marks)
 
-/filegrp global C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\gay.txt
+/filegrp global C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\file.txt
+```
