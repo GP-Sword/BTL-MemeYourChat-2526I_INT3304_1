@@ -11,9 +11,9 @@
 #include <WS2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
 
-#include "../libs/protocol.h"
-#include "../libs/sqlite.h"
-#include "../libs/net_utils.h"
+#include "../libs/common/protocol.h"
+#include "../libs/common/sqlite.h"
+#include "../libs/common/net_utils.h"
 
 #define DEFAULT_PORT 910
 #define BACKLOG 20

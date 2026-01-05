@@ -18,8 +18,8 @@ file(GLOB IMGUI_SOURCES
 
 # 2. Cấu hình GLFW
 set(GLFW_DIR "libs/glfw")
-include_directories("${GLFW_DIR}/include")
-link_directories("${GLFW_DIR}/lib-mingw-w64") 
+include_directories(${CMAKE_SOURCE_DIR}/libs/glfw/include)
+link_directories(${CMAKE_SOURCE_DIR}/libs/glfw/lib-mingw-w64)
 
 # 3. Tạo file chạy (Executable)
 # Lưu ý: Không thêm client.c vào đây để tránh trùng hàm main()
