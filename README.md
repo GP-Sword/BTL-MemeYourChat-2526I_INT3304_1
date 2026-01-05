@@ -7,7 +7,7 @@ BTL môn Lập trình mạng: Xây dựng chương trình chat sử dụng gi
 ### How to run
 
 Chỉnh lại include path của server.c. vì lí do nào đấy t k chạy dc khi để relative path.
-1. gcc server/server.c common/net_utils.c -o server_chat.exe -lws2_32
+1. gcc server/server.c common/net_utils.c common/sqlite.c common/sqlite3.c -o server_chat.exe -lws2_32
 2. gcc client/client.c common/net_utils.c -o client_chat.exe -lws2_32
 3. Terminal 1: .\server_chat.exe 910
 4. Terminal 2: .\client_chat.exe 127.0.0.1 910 đặt tên gì đó
