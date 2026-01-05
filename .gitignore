@@ -17,6 +17,8 @@
 # Debugger Files
 *.pdb
 *.vscode
+# *.log
+
 # Compiled Dynamic libraries
 *.so
 *.dylib
@@ -42,5 +44,8 @@
 # debug information files
 *.dwo
 
-# reources
+#Folder
+build/
+.cache/
+.vscode/
 resources/*
