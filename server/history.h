@@ -1,7 +1,7 @@
 #ifndef HISTORY_H
 #define HISTORY_H
 
-#include <winsock2.h>
+#include "../libs/common/os_defs.h"
 
 // Ghi log 1 dòng vào file history.log của topic
 void history_log(const char *topic, const char *sender, const char *kind, const char *content);

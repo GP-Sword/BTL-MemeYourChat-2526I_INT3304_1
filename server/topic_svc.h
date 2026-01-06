@@ -1,7 +1,7 @@
 #ifndef TOPIC_MGR_H
 #define TOPIC_MGR_H
 
-#include <winsock2.h>
+#include "../libs/common/os_defs.h"
 #include "../libs/common/protocol.h"
 
 void topic_svc_init(void);

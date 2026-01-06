@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <direct.h>
+#include "../libs/common/os_defs.h"
 #include "../libs/common/net_utils.h"
 
 #define DATA_DIR "resources"
