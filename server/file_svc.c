@@ -162,7 +162,13 @@ void file_handle_download(SOCKET sock, PacketHeader *hdr, const char *filename) 
     if (!fp) {
         char err_msg[128];
         snprintf(err_msg, sizeof(err_msg), "File not found: %s", filename);
-        PacketHeader err = { LTM_ERROR, (uint32_t)strlen(err_msg), "", "SERVER" };
+        
+        PacketHeader err;
+        memset(&err, 0, sizeof(err));
+        err.type = LTM_ERROR;
+        err.payload_size = (uint32_t)strlen(err_msg);
+        strcpy(err.sender_id, "SERVER");
+
         send_all(sock, &err, sizeof(err));
         send_all(sock, err_msg, (int)err.payload_size);
         return;
@@ -177,7 +183,11 @@ void file_handle_download(SOCKET sock, PacketHeader *hdr, const char *filename) 
     char meta_payload[512];
     snprintf(meta_payload, sizeof(meta_payload), "%s|%llu", filename, size);
 
-    PacketHeader meta_hdr = { LTM_FILE_META, (uint32_t)strlen(meta_payload), "", "SERVER" };
+    PacketHeader meta_hdr;
+    memset(&meta_hdr, 0, sizeof(meta_hdr));
+    meta_hdr.type = LTM_FILE_META;
+    meta_hdr.payload_size = (uint32_t)strlen(meta_payload);
+
     strcpy(meta_hdr.target_id, hdr->target_id); 
     strcpy(meta_hdr.sender_id, "SERVER");
 
@@ -187,8 +197,13 @@ void file_handle_download(SOCKET sock, PacketHeader *hdr, const char *filename) 
     char buffer[MAX_PAYLOAD_SIZE];
     size_t n;
     while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
-        PacketHeader chunk_hdr = { LTM_FILE_CHUNK, (uint32_t)n, "", "SERVER" };
+        PacketHeader chunk_hdr;
+        memset(&chunk_hdr, 0, sizeof(chunk_hdr));
+        chunk_hdr.type = LTM_FILE_CHUNK;
+        chunk_hdr.payload_size = (uint32_t)n;
+
         strcpy(chunk_hdr.target_id, hdr->target_id);
+        strcpy(chunk_hdr.sender_id, "SERVER");
         
         send_all(sock, &chunk_hdr, sizeof(chunk_hdr));
         send_all(sock, buffer, (int)n);

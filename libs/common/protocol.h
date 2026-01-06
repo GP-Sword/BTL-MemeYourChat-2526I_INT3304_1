@@ -29,6 +29,7 @@ typedef enum {
 } PacketType;
 
 #pragma pack(push, 1)
+
 typedef struct {
     uint8_t type;
     uint32_t payload_size;
@@ -36,9 +37,10 @@ typedef struct {
     char sender_id[MAX_ID_LEN]; // user id người gửi
 } PacketHeader;
 
+#pragma pack(pop)
+
 #ifdef __cplusplus
 }
 #endif
 
-#pragma pack(pop)
 #endif

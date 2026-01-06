@@ -32,7 +32,12 @@ static void parse_auth(const char *payload, char *mode, char *pw) {
 }
 
 static void send_err(SOCKET s, const char *msg) {
-    PacketHeader hdr = { LTM_ERROR, (uint32_t)strlen(msg), "", "SERVER" };
+    PacketHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.type = LTM_ERROR;
+    hdr.payload_size = (uint32_t)strlen(msg);
+    strcpy(hdr.sender_id, "SERVER");
+    
     send_all(s, &hdr, sizeof(hdr));
     if(hdr.payload_size) send_all(s, msg, (int)hdr.payload_size);
 }
@@ -46,11 +51,20 @@ DWORD WINAPI client_thread(LPVOID arg) {
     char payload[MAX_PAYLOAD_SIZE + 1];
 
     while (g_running) {
-        if (recv_all(s, &hdr, sizeof(hdr)) < 0) break;
-        if (hdr.payload_size > MAX_PAYLOAD_SIZE) break;
+        memset(&hdr, 0, sizeof(hdr));
+        memset(payload, 0, sizeof(payload));
+
+        int bytes_read = recv_all(s, &hdr, sizeof(hdr));
+        if (bytes_read <= 0) break; // Ngắt kết nối nếu lỗi hoặc client đóng (return 0)
+
+        // Kiểm tra tính hợp lệ của gói tin
+        if (hdr.payload_size > MAX_PAYLOAD_SIZE) {
+            printf("[SERVER] Payload too big (%u). Dropping client.\n", hdr.payload_size);
+            break;
+        }
 
         if (hdr.payload_size > 0) {
-            if (recv_all(s, payload, (int)hdr.payload_size) < 0) break;
+            if (recv_all(s, payload, (int)hdr.payload_size) <= 0) break;
             payload[hdr.payload_size] = '\0';
         } else {
             payload[0] = '\0';
@@ -67,18 +81,15 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 } else if (strcmp(mode, "LOGIN") == 0) {
                     if (db_verify_user(hdr.sender_id, pw)) {
                         // Login OK
-                        PacketHeader ack = { LTM_LOGIN, 0, "", "SERVER" };
+                        PacketHeader ack;
+                        memset(&ack, 0, sizeof(ack));
+                        ack.type = LTM_LOGIN;
+
                         strcpy(ack.target_id, hdr.sender_id);
+                        strcpy(ack.sender_id, "SERVER");
                         send_all(s, &ack, sizeof(ack));
 
-                        // Auto-subscribe
-                        char user_topic[64];
-                        snprintf(user_topic, sizeof(user_topic), "user/%s", hdr.sender_id);
-                        topic_subscribe(s, user_topic);
-                        topic_subscribe(s, "group/global");
-                        
-                        history_replay(s, user_topic);
-                        history_replay(s, "group/global");
+                        topic_persistence_load(s, hdr.sender_id);
                     } else {
                         send_err(s, "INVALID_PASSWORD");
                     }
@@ -95,13 +106,14 @@ DWORD WINAPI client_thread(LPVOID arg) {
                     printf("[SERVER] Register failed for %s\n", hdr.sender_id);
                     send_err(s, "REGISTER_FAILED");
                 } 
-                closesocket(s);
+                // closesocket(s);
                 return 0;
             }
             case LTM_JOIN_GRP: {
                 if (topic_exists(hdr.target_id)) {
                     printf("[SERVER] %s joined group %s\n", hdr.sender_id, hdr.target_id);
                     topic_subscribe(s, hdr.target_id);
+                    topic_persistence_add(hdr.sender_id, hdr.target_id);
                     history_replay(s, hdr.target_id);
                     
                     char msg[256];
@@ -173,13 +185,13 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 printf("[SERVER] MSG from %s to %s: %s\n", hdr.sender_id, hdr.target_id, payload);
                 history_log(hdr.target_id, hdr.sender_id, "MSG", payload);
 
-                // Nếu là PM (target bắt đầu bằng "user/"), log thêm vào hộp thư người gửi
                 if (strncmp(hdr.target_id, "user/", 5) == 0) {
-                    char sender_topic[64];
-                    snprintf(sender_topic, sizeof(sender_topic), "user/%s", hdr.sender_id);
-                    
-                    // Lưu vào lịch sử của người gửi để họ xem lại được tin mình đã gửi
-                    history_log(sender_topic, hdr.sender_id, "MSG", payload);
+                    topic_persistence_add(hdr.sender_id, hdr.target_id);
+                    char receiver_topic[64]; 
+                    snprintf(receiver_topic, 64, "user/%s", hdr.sender_id);
+                    topic_persistence_add(hdr.target_id + 5, receiver_topic);
+                } else {
+                    topic_persistence_add(hdr.sender_id, hdr.target_id);
                 }
 
                 topic_route_msg(s, &hdr, payload);
@@ -224,6 +236,7 @@ int main(int argc, char *argv[]) {
     listen(g_listen_sock, 20);
 
     printf("[SERVER] Modular Server running on %d...\n", DEFAULT_PORT);
+    printf("[DEBUG] Server PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
 
     // Accept Loop
     while(g_running) {
