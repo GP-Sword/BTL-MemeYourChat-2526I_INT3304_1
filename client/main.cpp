@@ -235,11 +235,30 @@ void RenderChat() {
                 char filepath[260] = {0};
                 if (OpenFileDialog(filepath, 260)) {
                     Net_SendFile(current_conv->id.c_str(), filepath);
+                    
                     std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                    Message m; m.timestamp = time(NULL); m.sender = g_State.username;
-                    m.content = "Sending file: " + std::string(filepath);
-                    m.is_file = false; m.file_name = ""; m.download_id = ""; m.is_history = false;
+                    
+                    Message m; 
+                    m.timestamp = time(NULL); 
+                    m.sender = g_State.username;
+                    
+                    // 1. Tách tên file từ đường dẫn đầy đủ
+                    std::string path_str = filepath;
+                    std::string filename = path_str.substr(path_str.find_last_of("/\\") + 1);
+
+                    // 2. Cấu hình tin nhắn dạng FILE
+                    m.is_file = true;            // Quan trọng: Phải là true UI mới vẽ nút file
+                    m.file_name = filename;      // Tên file để hiển thị
+                    m.content = "File: " + filename; // Nội dung fallback
+                    
+                    // Lưu ý: download_id lúc này chưa chính xác 100% (vì server sẽ thêm timestamp vào tên file),
+                    // nhưng để hiển thị đẹp thì tạm chấp nhận được.
+                    m.download_id = filename;    
+                    
+                    m.is_history = false;
                     current_conv->messages.push_back(m);
+                    
+                    // ------------------
                 }
             }
             
@@ -296,6 +315,28 @@ int main(int argc, char** argv) {
     
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    // Tải font từ file. Tham số: 
+    // 1. Tên file
+    // 2. Kích thước (pixels)
+    // 3. Config (NULL)
+    // 4. Glyph Ranges (Quan trọng để hiện tiếng Việt: GetGlyphRangesVietnamese)
+    
+    // Ví dụ tải font Roboto, cỡ chữ 18.0f
+    // Lưu ý: Đảm bảo file .ttf nằm cùng chỗ với file .exe
+    ImFont* font = io.Fonts->AddFontFromFileTTF("SVN-Arial.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    
+    // Nếu không tìm thấy file font, nó sẽ crash hoặc dùng font xấu mặc định.
+    // Nên kiểm tra null (tùy chọn):
+    if (font == NULL) {
+        printf("Khong tim thay file font! Se dung font mac dinh.\n");
+        io.Fonts->AddFontDefault();
+    }
+    // -----------------------------------
+    
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 

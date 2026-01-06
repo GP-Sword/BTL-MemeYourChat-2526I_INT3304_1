@@ -195,6 +195,14 @@ int main() {
 #endif
 
     socket_t ListenSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+    int opt = 1;
+#ifdef _WIN32
+    setsockopt(ListenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#else
+    setsockopt(ListenSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+
     struct sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
