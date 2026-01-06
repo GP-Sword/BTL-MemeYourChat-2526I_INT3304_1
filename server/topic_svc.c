@@ -139,8 +139,21 @@ void topic_route_msg(SOCKET sender_sock, PacketHeader *hdr, const char *payload)
 
 int topic_exists(const char *topic_name) {
     EnterCriticalSection(&g_topics_lock);
+    
+    // 1. Tìm trong RAM
     Topic *t = find_topic(topic_name);
     int exists = (t != NULL);
+
+    // 2. Nếu không có trong RAM, tìm trên ổ cứng
+    if (!exists) {
+        if (history_topic_exists_on_disk(topic_name)) {
+            // Nếu có trên ổ cứng -> Khôi phục lại vào RAM
+            get_or_create_topic(topic_name);
+            exists = 1;
+            printf("[TOPIC] Revived persistent topic: %s\n", topic_name);
+        }
+    }
+
     LeaveCriticalSection(&g_topics_lock);
     return exists;
 }
@@ -176,7 +189,7 @@ static void get_user_subs_path(const char *username, char *path) {
     _mkdir(DATA_DIR); // Tạo folder gốc resources
     
     char user_dir[260];
-    snprintf(user_dir, sizeof(user_dir), "%s/%s", DATA_DIR, username);
+    snprintf(user_dir, sizeof(user_dir), "%s/user_%s", DATA_DIR, username);
     _mkdir(user_dir); // Tạo folder user (nếu chưa có)
     
     snprintf(path, 260, "%s/subscriptions.txt", user_dir);

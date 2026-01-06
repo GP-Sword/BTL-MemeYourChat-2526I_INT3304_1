@@ -12,15 +12,13 @@ struct Message {
     bool is_file;            
     std::string file_name;   
     std::string download_id; 
-    bool is_history;         // <--- THÊM DÒNG NÀY
+    bool is_history;
 };
 
 struct Conversation {
     std::string id;
     std::string name;
     std::vector<Message> messages;
-    // Lưu ý: Đã xóa 'bool has_unread' để đơn giản hóa, 
-    // nên khi khởi tạo Conversation chỉ dùng 3 tham số.
 };
 
 struct DownloadState {
@@ -40,8 +38,12 @@ struct AppState {
 
     std::map<std::string, Conversation> conversations;
     std::string current_chat_id = "";
+    
     char input_buffer[1024] = "";
-    char search_buffer[64] = "";
+    
+    // --- UI INPUTS ---
+    char search_buffer[64] = "";    // Dùng cho Group
+    char pm_search_buffer[64] = ""; // Dùng cho User (MỚI)
 
     DownloadState download_state = {false, "", 0, 0, NULL};
 

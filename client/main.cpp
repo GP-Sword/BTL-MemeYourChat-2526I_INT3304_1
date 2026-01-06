@@ -60,7 +60,7 @@ void RenderChat() {
     ImGui::BeginChild("LeftPane", ImVec2(250, 0), true);
     ImGui::Text("User: %s", g_State.username);
     
-    // Hiển thị trạng thái Download
+    // Hiển thị trạng thái Download (Giữ nguyên)
     {
         std::lock_guard<std::mutex> lock(g_State.data_mutex);
         if (g_State.download_state.is_downloading) {
@@ -74,25 +74,75 @@ void RenderChat() {
     }
 
     ImGui::Separator();
-    ImGui::InputTextWithHint("##Add", "Join Group...", g_State.search_buffer, 64);
+    
+    // --- 1. JOIN GROUP ---
+    ImGui::TextDisabled("Groups");
+    ImGui::InputTextWithHint("##JoinGrp", "Group Name...", g_State.search_buffer, 64);
     ImGui::SameLine();
-    if (ImGui::Button("+")) {
-        if (strlen(g_State.search_buffer) > 0) Net_JoinGroup(g_State.search_buffer);
+    if (ImGui::Button("Join##Grp")) {
+        if (strlen(g_State.search_buffer) > 0) {
+            Net_JoinGroup(g_State.search_buffer);
+            g_State.search_buffer[0] = '\0';
+        }
+    }
+
+    // --- 2. ADD USER (CHAT RIÊNG) ---
+    ImGui::Spacing();
+    ImGui::TextDisabled("Direct Messages");
+    ImGui::InputTextWithHint("##AddPM", "Username...", g_State.pm_search_buffer, 64);
+    ImGui::SameLine();
+    if (ImGui::Button("Chat##PM")) {
+        if (strlen(g_State.pm_search_buffer) > 0) {
+            std::string user = g_State.pm_search_buffer;
+            
+            // Không tự chat với chính mình
+            if (user != std::string(g_State.username)) {
+                std::string topic = "user/" + user;
+                
+                std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                if (g_State.conversations.find(topic) == g_State.conversations.end()) {
+                    // Tạo hội thoại local ngay lập tức
+                    Conversation new_conv;
+                    new_conv.id = topic;
+                    new_conv.name = user; // Tên hiển thị là tên user
+                    g_State.conversations[topic] = new_conv;
+                }
+                // Chuyển sang khung chat này
+                g_State.current_chat_id = topic;
+                
+                // Clear ô nhập
+                g_State.pm_search_buffer[0] = '\0';
+            }
+        }
     }
 
     ImGui::Separator();
+    ImGui::TextDisabled("Conversations");
+    
+    // --- LIST CONVERSATIONS ---
     {
         std::lock_guard<std::mutex> lock(g_State.data_mutex);
         for (auto& [id, conv] : g_State.conversations) {
             bool is_selected = (g_State.current_chat_id == id);
-            if (ImGui::Selectable(conv.name.c_str(), is_selected)) g_State.current_chat_id = id;
+            
+            // Đặt màu khác nhau cho Group và User để dễ phân biệt
+            if (id.find("group/") == 0) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 1.0f, 1.0f)); // Xanh nhạt cho Group
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 1.0f, 0.6f, 1.0f)); // Xanh lá cho User
+            }
+
+            if (ImGui::Selectable(conv.name.c_str(), is_selected)) {
+                g_State.current_chat_id = id;
+            }
+            ImGui::PopStyleColor();
         }
     }
     ImGui::EndChild();
 
     ImGui::SameLine();
 
-    // --- CHAT BOX ---
+    // --- CHAT BOX (Phần bên phải giữ nguyên) ---
     ImGui::BeginGroup();
         Conversation* current_conv = nullptr;
         {
@@ -110,7 +160,14 @@ void RenderChat() {
                 std::lock_guard<std::mutex> lock(g_State.data_mutex);
                 for (auto& msg : current_conv->messages) {
                     ImGui::TextDisabled("[%lld]", msg.timestamp); ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1,1,0,1), "%s:", msg.sender.c_str()); ImGui::SameLine();
+                    
+                    // Highlight người gửi
+                    if (msg.sender == std::string(g_State.username)) {
+                        ImGui::TextColored(ImVec4(0,1,1,1), "Me:"); 
+                    } else {
+                        ImGui::TextColored(ImVec4(1,1,0,1), "%s:", msg.sender.c_str());
+                    }
+                    ImGui::SameLine();
                     
                     if (msg.is_file) {
                         std::string label = "[FILE] " + msg.file_name + " (Click to Download)";
@@ -121,6 +178,10 @@ void RenderChat() {
                         ImGui::TextWrapped("%s", msg.content.c_str());
                     }
                 }
+                
+                // Auto scroll xuống dưới cùng nếu đang ở dưới
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                    ImGui::SetScrollHereY(1.0f);
             }
             ImGui::EndChild();
 
@@ -192,7 +253,7 @@ void RenderChat() {
                     g_State.input_buffer[0] = '\0';
                 }
             }
-        } // <--- ĐÃ THÊM DẤU NGOẶC ĐÓNG NÀY (Đây là chỗ gây lỗi)
+        } 
 
     ImGui::EndGroup();
     ImGui::End();

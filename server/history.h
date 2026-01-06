@@ -12,4 +12,7 @@ void history_replay(SOCKET client_sock, const char *topic);
 // Helper để tạo đường dẫn lưu file upload (dùng chung với module File)
 void history_make_paths(const char *topic, char *group_name, char *files_dir);
 
+// Kiểm tra xem topic (folder) có tồn tại trên ổ cứng không
+int history_topic_exists_on_disk(const char *topic);
+
 #endif

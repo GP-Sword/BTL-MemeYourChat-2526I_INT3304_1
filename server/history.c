@@ -206,3 +206,18 @@ void history_replay(SOCKET client_sock, const char *topic) {
     }
     fclose(f);
 }
+
+int history_topic_exists_on_disk(const char *topic) {
+    char storage_name[64];
+    get_storage_name(topic, storage_name, sizeof(storage_name));
+
+    char path[MAX_LOG_PATH];
+    snprintf(path, sizeof(path), "%s/%s", DATA_DIR, storage_name);
+
+    // Kiểm tra xem folder có tồn tại không
+    DWORD attr = GetFileAttributesA(path);
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        return 1; // Có tồn tại
+    }
+    return 0; // Không tồn tại
+}
