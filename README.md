@@ -46,7 +46,7 @@ Project/
 ## 3. How to run
 # 3.1. Backend
 
-1. Chạy `compile_script.bat` (đối với Windows) hoặc `compile_script.sh` (đối với Linux)
+1. Chạy `compile_script.bat [--chat]` (đối với Windows) hoặc `compile_script.sh [--chat]` (đối với Linux)
 2. Trong Terminal 1: `.\server_chat.exe \[PORT, demo dùng 910\]`
 3. Trong Terminal 2: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_1\]`
 4. Trong Terminal 3: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_2\]`
@@ -109,13 +109,12 @@ Trước khi chạy Client, bạn phải copy file glfw3.dll từ libs/glfw/lib-
 
 
 # 3.3. Minigame
-Đầu tiên, compile
-```
-gcc game/game_server.c -o game_server.exe -lws2_32
-gcc game/game_client.c -o game_client_win.exe -lgdi32 -luser32 -lws2_32 -mwindows
-```
 
-Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào chơi.
+1. Chạy `compile_script.bat [--game]` (đối với Windows) hoặc `compile_script.sh [--game]` (đối với Linux)
+2. Trong Terminal chính: `.\game_server.exe` để khởi tạo server
+3. Trong Terminal khác: `.\game_client.exe` để mở game
+
+Cần 2 client game khác nhau để bắt đầu game
 
 Linux:
 - Packet: sudo apt-get install cmake build-essential libglfw3-dev libgl1-mesa-dev pkg-config
