@@ -112,7 +112,7 @@ Trước khi chạy Client, bạn phải copy file glfw3.dll từ libs/glfw/lib-
 Đầu tiên, compile
 ```
 gcc game/game_server.c -o game_server.exe -lws2_32
-For win: gcc game/game_client_win.c -o game_client.exe -lgdi32 -luser32 -lws2_32 -mwindows
+gcc game/game_client.c -o game_client_win.exe -lgdi32 -luser32 -lws2_32 -mwindows
 ```
 
 Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào chơi.
