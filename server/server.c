@@ -3,9 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <process.h> 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "../libs/common/os_defs.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -42,7 +40,12 @@ static void send_err(SOCKET s, const char *msg) {
     if(hdr.payload_size) send_all(s, msg, (int)hdr.payload_size);
 }
 
-DWORD WINAPI client_thread(LPVOID arg) {
+#ifdef _WIN32
+DWORD WINAPI client_thread(LPVOID arg)
+#else
+void* client_thread(void* arg)
+#endif
+{
     SOCKET s = *(SOCKET*)arg;
     free(arg);
     printf("[SERVER] Client connected (sock %d)\n", (int)s);
@@ -245,7 +248,14 @@ int main(int argc, char *argv[]) {
 
         SOCKET *arg = malloc(sizeof(SOCKET));
         *arg = client;
-        CreateThread(NULL, 0, client_thread, arg, 0, NULL);
+
+        #ifdef _WIN32
+            CreateThread(NULL, 0, client_thread, arg, 0, NULL);
+        #else
+            pthread_t tid;
+            pthread_create(&tid, NULL, client_thread, arg);
+            pthread_detach(tid);
+        #endif
     }
 
     // Cleanup

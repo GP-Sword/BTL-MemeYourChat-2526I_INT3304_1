@@ -2,7 +2,6 @@
 #include "history.h"
 #include <stdio.h>
 #include <time.h>
-#include <direct.h>
 #include <string.h>
 #include "../libs/common/protocol.h"
 #include "../libs/common/net_utils.h"

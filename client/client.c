@@ -5,10 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <direct.h>
-
-#include <winsock2.h>
-#include <Ws2tcpip.h>
+#include "../libs/common/os_defs.h"
 #pragma comment(lib, "Ws2_32.lib")
 
 #include "../libs/common/protocol.h"
@@ -147,7 +144,12 @@ static int parse_file_meta(const char *payload, char *filename, size_t filename_
 
 // --- Thread & Flow ---
 
-DWORD WINAPI receiver_thread(LPVOID arg) {
+#ifdef _WIN32
+DWORD WINAPI receiver_thread(LPVOID arg)
+#else
+void* receiver_thread(void* arg)
+#endif
+{
     (void)arg;
     while (g_running) {
         PacketHeader hdr;
