@@ -5,10 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h> // Để dùng File Dialog
 #include "state.h"
 #include "net_logic.h"
 #include "../libs/common/protocol.h"
+#include <windows.h> // Để dùng File Dialog
+#include <shellapi.h>
 
 AppState g_State; 
 
@@ -195,7 +196,8 @@ void RenderChat() {
         if (current_conv) {
             ImGui::Text("Chat: %s", current_conv->name.c_str());
             ImGui::Separator();
-
+            
+            // --- VÙNG HIỂN THỊ LỊCH SỬ CHAT  ---
             ImGui::BeginChild("History", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
             {
                 std::lock_guard<std::mutex> lock(g_State.data_mutex);
@@ -228,74 +230,60 @@ void RenderChat() {
 
             ImGui::Separator();
             // Input Area
+            // 1. Nút Attach
             if (ImGui::Button("Attach...")) {
                 char filepath[260] = {0};
                 if (OpenFileDialog(filepath, 260)) {
                     Net_SendFile(current_conv->id.c_str(), filepath);
-                    
                     std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                    Message m;
-                    m.timestamp = time(NULL);
-                    m.sender = g_State.username;
+                    Message m; m.timestamp = time(NULL); m.sender = g_State.username;
                     m.content = "Sending file: " + std::string(filepath);
-                    m.is_file = false; 
-                    m.file_name = "";
-                    m.download_id = "";
-                    m.is_history = false;
+                    m.is_file = false; m.file_name = ""; m.download_id = ""; m.is_history = false;
                     current_conv->messages.push_back(m);
                 }
             }
+            
             ImGui::SameLine();
             
-            // Xử lý khi ấn Enter
-            if (ImGui::InputText("##Msg", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            // 2. Ô Nhập Text (Input)
+            // Tính toán chiều rộng để chừa chỗ cho 2 nút Send và Game
+            float width = ImGui::GetContentRegionAvail().x - 110; // Trừ đi khoảng 110 pixel cho 2 nút bên phải
+            ImGui::PushItemWidth(width);
+            
+            bool enter_pressed = ImGui::InputText("##Msg", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue);
+            
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            
+            // 3. Nút Send
+            if (ImGui::Button("Send") || enter_pressed) {
                 if (strlen(g_State.input_buffer) > 0) {
                     Net_SendMessage(current_conv->id.c_str(), g_State.input_buffer);
                     
-                    // HIỂN THỊ NGAY
-                    {
-                        std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                        Message m;
-                        m.timestamp = time(NULL);
-                        m.sender = g_State.username;
-                        m.content = g_State.input_buffer;
-                        m.is_file = false;
-                        m.file_name = "";
-                        m.download_id = "";
-                        m.is_history = false;
-                        current_conv->messages.push_back(m);
-                    }
+                    // Hiện ngay lên màn hình
+                    std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                    Message m; m.timestamp = time(NULL); m.sender = g_State.username;
+                    m.content = g_State.input_buffer;
+                    m.is_file = false; m.file_name = ""; m.download_id = ""; m.is_history = false;
+                    current_conv->messages.push_back(m);
 
                     g_State.input_buffer[0] = '\0';
-                    ImGui::SetKeyboardFocusHere(-1);
+                    ImGui::SetKeyboardFocusHere(-1); // Focus lại vào ô chat
                 }
             }
 
+            // 4. Nút Game (ĐẶT CẠNH NÚT SEND)
             ImGui::SameLine();
-            
-            // Xử lý khi ấn nút Send
-            if (ImGui::Button("Send")) {
-                if (strlen(g_State.input_buffer) > 0) {
-                    Net_SendMessage(current_conv->id.c_str(), g_State.input_buffer);
-
-                    // HIỂN THỊ NGAY
-                    {
-                        std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                        Message m;
-                        m.timestamp = time(NULL);
-                        m.sender = g_State.username;
-                        m.content = g_State.input_buffer;
-                        m.is_file = false;
-                        m.file_name = "";
-                        m.download_id = "";
-                        m.is_history = false;
-                        current_conv->messages.push_back(m);
-                    }
-                    g_State.input_buffer[0] = '\0';
-                }
+            // Tô màu cam cho nổi bật
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.0f, 1.0f)); 
+            if (ImGui::Button("X0")) {
+                // Mở game client
+                ShellExecuteA(NULL, "open", "game_client.exe", NULL, NULL, SW_SHOW);
             }
+            ImGui::PopStyleColor();
+            // ----------------------------------------
         } 
-
+        
     ImGui::EndGroup();
     ImGui::End();
 }
