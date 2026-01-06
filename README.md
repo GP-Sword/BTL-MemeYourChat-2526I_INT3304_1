@@ -23,33 +23,38 @@ Sau khi setup xong, cấu trúc thư mục chuẩn phải trông như sau:
 ```text
 Project/
 ├── server/
-│   └── server.c
+│   ├── server.c          // File server chính
+│   ├── topic_svc.c       // Xử lý logic liên quan nhóm
+│   ├── file_svc.c        // Xử lý logic liên quan file
+│   └── history.c         // Quản lý lịch sử chat
+│
 ├── client/
 │   ├── main.cpp          // Entry point + ImGui Loop
 │   ├── net_logic.h       // Header hàm xử lý mạng
 │   ├── net_logic.cpp     // Logic mạng (Cải biên từ client.c)
 │   └── state.h           // Struct dữ liệu chung (biến toàn cục)
-├── libs/                   # Thư viện bên ngoài (Quan trọng!)
-│   ├── imgui/              # Source code ImGui
-│   │   ├── backends/       # BẮT BUỘC CÓ (chứa imgui_impl_glfw...)
-│   │   ├── imgui.cpp
-│   │   └── imgui.h ...
+│
+├── libs/                   # Thư viện hỗ trợ
+│   ├── common/             
+│   │   ├── protocol.h       
+│   │   ├── net_utils.h
+│   │   ├── sqlite3.h
+│   │   └── ...
 │   └── glfw/               # Thư viện đồ họa
 │       ├── include/
 │       └── lib-mingw-w64/  # Chứa file .a và .dll
+│
 └── CMakeLists.txt        // File cấu hình build (Dùng CMake cho dễ quản lý)
-
 ```
 
 
 ## 3. How to run
 # 3.1. Backend
 
-1. gcc server/server.c libs/common/net_utils.c libs/common/sqlite.c libs/common/sqlite3.c -o server_chat.exe -lws2_32
-2. gcc client/client.c common/net_utils.c -o client_chat.exe -lws2_32
-3. Terminal 1: .\server_chat.exe 910
-4. Terminal 2: .\client_chat.exe 127.0.0.1 910 \[username_1\]
-5. Terminal 3: .\client_chat.exe 127.0.0.1 910 \[username_2\]
+1. Chạy `compile_script.bat` (đối với Windows) hoặc `compile_script.sh` (đối với Linux)
+2. Trong Terminal 1: `.\server_chat.exe \[PORT, demo dùng 910\]`
+3. Trong Terminal 2: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_1\]`
+4. Trong Terminal 3: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_2\]`
 
 Expected output:
 ```
