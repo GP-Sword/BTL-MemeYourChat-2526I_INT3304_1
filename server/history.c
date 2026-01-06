@@ -29,16 +29,29 @@ static void strip_newline(char *s) {
 
 static void ensure_dir(const char *dir) { _mkdir(dir); }
 
+static void get_storage_name(const char *topic, char *out_name, size_t max_len) {
+    if (strncmp(topic, "group/", 6) == 0) {
+        // group/abc -> group_abc
+        snprintf(out_name, max_len, "group_%s", topic + 6);
+    } 
+    else if (strncmp(topic, "user/", 5) == 0) {
+        // user/alice -> user_alice
+        snprintf(out_name, max_len, "user_%s", topic + 5);
+    } 
+    else {
+        // Giữ nguyên nếu không khớp pattern
+        snprintf(out_name, max_len, "%s", topic);
+    }
+}
+
 static void resolve_paths(const char *topic, char *logs_path) {
     ensure_dir(DATA_DIR);
     
-    // Clean topic name (group/abc -> abc)
-    const char *safe_name = topic;
-    if (strncmp(topic, "group/", 6) == 0) safe_name = topic + 6;
-    else if (strncmp(topic, "user/", 5) == 0) safe_name = topic + 5;
+    char storage_name[64];
+    get_storage_name(topic, storage_name, sizeof(storage_name));
 
     char group_dir[MAX_LOG_PATH];
-    snprintf(group_dir, sizeof(group_dir), "%s/%s", DATA_DIR, safe_name);
+    snprintf(group_dir, sizeof(group_dir), "%s/%s", DATA_DIR, storage_name);
     ensure_dir(group_dir);
 
     char logs_dir[MAX_LOG_PATH];
@@ -52,14 +65,14 @@ static void resolve_paths(const char *topic, char *logs_path) {
 
 void history_make_paths(const char *topic, char *group_name, char *files_dir) {
     ensure_dir(DATA_DIR);
-    const char *safe_name = topic;
-    if (strncmp(topic, "group/", 6) == 0) safe_name = topic + 6;
-    else if (strncmp(topic, "user/", 5) == 0) safe_name = topic + 5;
+
+    char storage_name[64];
+    get_storage_name(topic, storage_name, sizeof(storage_name));
     
-    if (group_name) strcpy(group_name, safe_name);
+    if (group_name) strcpy(group_name, storage_name);
 
     char group_dir[MAX_LOG_PATH];
-    snprintf(group_dir, sizeof(group_dir), "%s/%s", DATA_DIR, safe_name);
+    snprintf(group_dir, sizeof(group_dir), "%s/%s", DATA_DIR, storage_name);
     ensure_dir(group_dir);
 
     if (files_dir) {
