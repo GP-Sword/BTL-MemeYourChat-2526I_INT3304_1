@@ -8,9 +8,60 @@
 #include "state.h"
 #include "net_logic.h"
 #include "../libs/common/protocol.h"
-#include <windows.h> // Để dùng File Dialog
-#include <shellapi.h>
 
+// --- 1. HEADERS & HÀM CROSS-PLATFORM ---
+#ifdef _WIN32
+    #include <windows.h> // Để dùng File Dialog
+    #include <shellapi.h>
+
+    // Hàm mở File Dialog của Windows
+    bool OpenFileDialog(char* buffer, int max_len) {
+        OPENFILENAMEA ofn;
+        char szFile[260] = {0};
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFileTitle = NULL;
+        ofn.nMaxFileTitle = 0;
+        ofn.lpstrInitialDir = NULL;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+        if (GetOpenFileNameA(&ofn) == TRUE) {
+            strncpy(buffer, ofn.lpstrFile, max_len);
+            return true;
+        }
+        return false;
+    }
+
+    void LaunchGame() {
+        ShellExecuteA(NULL, "open", "game_client.exe", NULL, NULL, SW_SHOW);
+    }
+#else
+    #include <unistd.h>
+    #include <stdlib.h>
+
+    // Hàm thay thế cho Linux: Nhập đường dẫn từ Terminal
+    // (Vì tích hợp Zenity/GTK phức tạp hơn nhiều)
+    bool OpenFileDialog(char* buffer, int max_len) {
+        printf("\n[LINUX FILE PICKER] Please enter file path:\n> ");
+        if (fgets(buffer, max_len, stdin)) {
+            // Xóa ký tự xuống dòng
+            buffer[strcspn(buffer, "\n")] = 0;
+            return (strlen(buffer) > 0);
+        }
+        return false;
+    }
+
+    void LaunchGame() {
+        // Chạy file game_client (không đuôi .exe) ở chế độ background
+        system("./game_client &");
+    }
+#endif
+// ---------------------------------------
 AppState g_State; 
 
 // Hàm mở File Dialog của Windows
@@ -297,7 +348,7 @@ void RenderChat() {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.0f, 1.0f)); 
             if (ImGui::Button("X0")) {
                 // Mở game client
-                ShellExecuteA(NULL, "open", "game_client.exe", NULL, NULL, SW_SHOW);
+                LaunchGame(); // <--- Gọi hàm wrapper cross-platform
             }
             ImGui::PopStyleColor();
             // ----------------------------------------

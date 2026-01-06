@@ -5,6 +5,13 @@
 #include <mutex>
 #include <winsock2.h>
 
+#ifdef _WIN32
+    #include <winsock2.h>
+#else
+    // Linux không dùng winsock2, chỉ cần các kiểu dữ liệu cơ bản
+    #include <netinet/in.h>
+#endif
+
 struct Message {
     long long timestamp;
     std::string sender;
