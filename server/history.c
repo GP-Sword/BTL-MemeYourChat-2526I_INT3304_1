@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
+#include "../libs/common/os_defs.h"
 #include "../libs/common/protocol.h"
 #include "../libs/common/net_utils.h"
 
@@ -180,9 +181,16 @@ int history_topic_exists_on_disk(const char *topic) {
     snprintf(path, sizeof(path), "%s/%s", DATA_DIR, storage_name);
 
     // Kiểm tra xem folder có tồn tại không
+#ifdef _WIN32
     DWORD attr = GetFileAttributesA(path);
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
-        return 1; // Có tồn tại
+        return 1;
     }
+#else
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return 1;
+    }
+#endif
     return 0; // Không tồn tại
 }

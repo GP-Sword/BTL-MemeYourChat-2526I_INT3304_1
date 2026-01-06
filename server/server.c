@@ -249,13 +249,13 @@ int main(int argc, char *argv[]) {
         SOCKET *arg = malloc(sizeof(SOCKET));
         *arg = client;
 
-        #ifdef _WIN32
-            CreateThread(NULL, 0, client_thread, arg, 0, NULL);
-        #else
-            pthread_t tid;
-            pthread_create(&tid, NULL, client_thread, arg);
-            pthread_detach(tid);
-        #endif
+    #ifdef _WIN32
+        CreateThread(NULL, 0, client_thread, arg, 0, NULL);
+    #else
+        pthread_t tid;
+        pthread_create(&tid, NULL, client_thread, arg);
+        pthread_detach(tid);
+    #endif
     }
 
     // Cleanup

@@ -328,7 +328,14 @@ int main(int argc, char *argv[]) {
     if (auth_flow(ip, port) != 0) return 0;
 
     // Start Chat
+#ifdef _WIN32
     CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
+#else
+    pthread_t tid;
+    pthread_create(&tid, NULL, receiver_thread, NULL);
+    pthread_detach(tid);
+#endif
+
     show_help();
 
     char input[INPUT_BUF_SIZE];
