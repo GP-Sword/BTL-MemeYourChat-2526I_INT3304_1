@@ -26,8 +26,4 @@ void Net_JoinGroup(const char* group_name);
 // Gửi file (Cắt nhỏ thành chunk và gửi)
 void Net_SendFile(const char* target_id, const char* filepath);
 
-// Yêu cầu server cho tải file về
-// target_id: group/global, file_server_name: 1766_image.png
-void Net_RequestDownload(const char* target_id, const char* file_server_name);
-
 #endif

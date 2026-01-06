@@ -28,11 +28,4 @@ void topic_create(const char *topic_name);
 // Lấy danh sách nhóm
 int topic_get_list(char *buf, int max_len); 
 
-// --- MỚI: PERSISTENCE (LƯU FILE TXT) ---
-// Lưu thông tin user đã tham gia topic nào vào file
-void topic_persistence_add(const char *username, const char *topic);
-
-// Load lại danh sách topic của user khi login
-void topic_persistence_load(SOCKET sock, const char *username);
-
 #endif

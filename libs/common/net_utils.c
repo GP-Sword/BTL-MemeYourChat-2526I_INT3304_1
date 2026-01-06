@@ -12,7 +12,7 @@ int send_all(SOCKET sock, const void *buf, int len) {
         }
         total += sent; // ghi đủ len byte
     }
-    return total;
+    return 0;
 }
 
 int recv_all(SOCKET sock, void *buf, int len) {
@@ -25,6 +25,6 @@ int recv_all(SOCKET sock, void *buf, int len) {
         }
         total += recvd;
     }
-    return total;
+    return 0;
 }
 

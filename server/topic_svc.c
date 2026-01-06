@@ -1,13 +1,7 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include "topic_svc.h"
-#include "history.h" 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <direct.h> // Thư viện để dùng _mkdir
 #include "../libs/common/net_utils.h"
-
-#define DATA_DIR "resources"
 
 typedef struct SubscriberNode {
     SOCKET sock;
@@ -62,6 +56,7 @@ void topic_subscribe(SOCKET sock, const char *topic_name) {
         LeaveCriticalSection(&g_topics_lock);
         return;
     }
+    // Check if exists
     SubscriberNode *cur = t->subs;
     while(cur) {
         if (cur->sock == sock) {
@@ -70,10 +65,12 @@ void topic_subscribe(SOCKET sock, const char *topic_name) {
         }
         cur = cur->next;
     }
+    // Add new
     SubscriberNode *node = (SubscriberNode *)malloc(sizeof(SubscriberNode));
     node->sock = sock;
     node->next = t->subs;
     t->subs = node;
+    printf("[TOPIC] Socket %d joined %s\n", (int)sock, topic_name);
     LeaveCriticalSection(&g_topics_lock);
 }
 
@@ -121,6 +118,7 @@ void topic_route_msg(SOCKET sender_sock, PacketHeader *hdr, const char *payload)
     Topic *t = find_topic(hdr->target_id);
     if (!t) {
         LeaveCriticalSection(&g_topics_lock);
+        // printf("[TOPIC] No subscribers for %s\n", hdr->target_id);
         return;
     }
     SubscriberNode *cur = t->subs;
@@ -169,7 +167,9 @@ int topic_get_list(char *buf, int max_len) {
     Topic *t = g_topics;
     int offset = 0;
     offset += snprintf(buf + offset, max_len - offset, "Available Groups:\n");
+    
     while (t && offset < max_len) {
+        // Chỉ liệt kê các topic bắt đầu bằng "group/"
         if (strncmp(t->name, "group/", 6) == 0) {
             offset += snprintf(buf + offset, max_len - offset, " - %s\n", t->name + 6);
         }
@@ -177,6 +177,7 @@ int topic_get_list(char *buf, int max_len) {
     }
     LeaveCriticalSection(&g_topics_lock);
     return offset;
+<<<<<<< HEAD
 }
 
 // ============================================================
@@ -294,4 +295,6 @@ void topic_persistence_load(SOCKET sock, const char *username) {
         }
     }
     fclose(f);
+=======
+>>>>>>> parent of a8797bf (Add Real-time Chat function (Still wrong the Add Group/User Func))
 }
