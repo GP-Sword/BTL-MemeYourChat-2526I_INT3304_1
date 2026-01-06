@@ -3,7 +3,6 @@
 #include <string>
 #include <map>
 #include <mutex>
-#include <winsock2.h>
 
 #ifdef _WIN32
     #include <winsock2.h>
