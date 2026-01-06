@@ -28,15 +28,29 @@
     #include <string.h>
     
     // Định nghĩa lại các kiểu/hàm của Windows sang Linux
+    // Dùng #ifndef để tránh warning nếu đã được define trong os_defs.h
+    
+    #ifndef SOCKET
     #define SOCKET int
+    #endif
+
+    #ifndef INVALID_SOCKET
     #define INVALID_SOCKET -1
+    #endif
+
+    #ifndef SOCKET_ERROR
     #define SOCKET_ERROR -1
+    #endif
+
+    #ifndef closesocket
     #define closesocket close
+    #endif
     
     // Linux mkdir cần mode (0777: quyền đọc ghi đầy đủ)
+    // Macro này chưa có trong os_defs.h nên cứ define bình thường
     #define MKDIR(dir) mkdir(dir, 0777)
     #define F_TELL ftell
-#endif 
+#endif
 
 SOCKET g_sock = INVALID_SOCKET;
 volatile bool g_net_running = false;

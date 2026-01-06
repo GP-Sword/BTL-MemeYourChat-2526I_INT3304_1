@@ -389,7 +389,7 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
     
-    printf("[DEBUG] Client PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
+    // printf("[DEBUG] Client PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
 
     Net_Disconnect();
     ImGui_ImplOpenGL3_Shutdown();
