@@ -8,6 +8,8 @@ bool Net_Connect(const char* ip, int port);
 // Gửi gói tin Login (hoặc Register nếu server yêu cầu)
 void Net_Login(const char* user, const char* pass);
 
+void Net_Register(const char* user, const char* pass);
+
 // Ngắt kết nối (Dùng khi đóng app)
 void Net_Disconnect();
 
