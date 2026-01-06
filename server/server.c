@@ -145,6 +145,30 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 }
                 break;
             }
+            case LTM_USERS_CMD: {
+                if (strcmp(payload, "LISTUSERS") == 0) {
+                    char buf[2048];
+                    int count = db_list_users_to_buffer(buf, sizeof(buf));
+
+                    if (count <= 0) {
+                        strcpy(buf, "No users found.\n");
+                    }
+
+                    PacketHeader resp;
+                    memset(&resp, 0, sizeof(resp));
+                    resp.type = (uint8_t)LTM_USERS_CMD;           // hoặc LTM_MESSAGE nếu thích
+                    resp.payload_size = (uint32_t)strlen(buf);
+                    strncpy(resp.sender_id, "SERVER", MAX_ID_LEN - 1);
+                    strncpy(resp.target_id, hdr.sender_id, MAX_ID_LEN - 1); // gửi riêng cho thằng yêu cầu
+
+                    if (send_all(s, &resp, sizeof(resp)) == 0) {
+                        if (resp.payload_size > 0) {
+                            send_all(s, buf, (int)resp.payload_size);
+                        }
+                    }
+                }
+                break;
+            }
             case LTM_MESSAGE:
                 printf("[SERVER] MSG from %s to %s: %s\n", hdr.sender_id, hdr.target_id, payload);
                 history_log(hdr.target_id, hdr.sender_id, "MSG", payload);

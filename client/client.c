@@ -214,6 +214,9 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
                 }
                 break;
             }
+            case LTM_USERS_CMD:
+                printf("%s", payload);
+                break;
             case LTM_HISTORY:
                 printf("%s\n", payload);
                 break;
@@ -327,11 +330,14 @@ int main(int argc, char *argv[]) {
             snprintf(target, sizeof(target), "group/%s", input + 8);
             send_packet(LTM_GROUP_CMD, target, "CREATE");
         }
+        else if (strncmp(input, "/listusers", 10) == 0) {
+            if (send_packet(LTM_USERS_CMD, "", "LISTUSERS") != 0) {
+                printf("[CLIENT] Failed to send list users command.\n");
+            }
+        }
         else if (strncmp(input, "/list", 5) == 0) {
             send_packet(LTM_GROUP_CMD, "", "LIST");
-        }else if (strncmp(input, "/listusers", 10) == 0) {
-            send_packet(LTM_USERS_CMD, "", "LISTUSERS");
-        }
+        } 
         else if (strncmp(input, "/join ", 6) == 0) {
             char target[MAX_ID_LEN];
             snprintf(target, sizeof(target), "group/%s", input + 6);

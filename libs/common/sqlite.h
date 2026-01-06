@@ -21,4 +21,5 @@ int db_create_user(const char *username, const char *password);
 
 void db_list_users(void);
 
+int db_list_users_to_buffer(char *buf, size_t buf_size);
 #endif // SQLITE_WRAPPER_H
