@@ -214,12 +214,25 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
                 }
                 break;
             }
-            case LTM_USERS_CMD:
-                printf("%s", payload);
-                break;
             case LTM_HISTORY:
-                printf("%s\n", payload);
-                break;
+                {
+                    char *p_ts = strtok(payload, "|");
+                    char *p_sender = strtok(NULL, "|");
+                    char *p_kind = strtok(NULL, "|");
+                    char *p_content = strtok(NULL, ""); // Lấy phần còn lại
+
+                    if (p_ts && p_sender && p_content) {
+                        time_t ts = (time_t)_strtoi64(p_ts, NULL, 10);
+                        struct tm *tm_info = localtime(&ts);
+                        char time_buf[64];
+                        strftime(time_buf, sizeof(time_buf), "%H:%M:%S", tm_info);
+
+                        printf("[%s] [%s] %s: %s\n", time_buf, hdr.target_id, p_sender, p_content);
+                    } else {
+                        // Fallback nếu lỗi format
+                        printf("[%s] %s\n", hdr.target_id, payload);
+                    }
+                }
             case LTM_ERROR:
                 printf("[SERVER ERROR] %s\n", payload);
                 break;
@@ -330,14 +343,11 @@ int main(int argc, char *argv[]) {
             snprintf(target, sizeof(target), "group/%s", input + 8);
             send_packet(LTM_GROUP_CMD, target, "CREATE");
         }
-        else if (strncmp(input, "/listusers", 10) == 0) {
-            if (send_packet(LTM_USERS_CMD, "", "LISTUSERS") != 0) {
-                printf("[CLIENT] Failed to send list users command.\n");
-            }
-        }
         else if (strncmp(input, "/list", 5) == 0) {
             send_packet(LTM_GROUP_CMD, "", "LIST");
-        } 
+        }else if (strncmp(input, "/listusers", 10) == 0) {
+            send_packet(LTM_USERS_CMD, "", "LISTUSERS");
+        }
         else if (strncmp(input, "/join ", 6) == 0) {
             char target[MAX_ID_LEN];
             snprintf(target, sizeof(target), "group/%s", input + 6);
