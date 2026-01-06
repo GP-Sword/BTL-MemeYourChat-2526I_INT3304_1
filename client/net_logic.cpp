@@ -154,11 +154,31 @@ void ReceiverLoop() {
         }
         else if (hdr.type == LTM_FILE_META) {
             std::string p = str_payload;
+            // Parse thông tin file
             std::string fname = p.substr(0, p.find('|'));
-            unsigned long long size = std::stoull(p.substr(p.find('|') + 1));
+            unsigned long long size = 0;
+            try {
+                size = std::stoull(p.substr(p.find('|') + 1));
+            } catch (...) {}
+
+            // --- THÊM ĐOẠN NÀY ---
+            // Nếu người gửi KHÁC "SERVER", tức là một User khác đang gửi file vào nhóm/PM
+            // Ta cần hiển thị bong bóng chat để người nhận biết.
+            if (std::string(hdr.sender_id) != "SERVER") {
+                // Tạo một nội dung giả lập giống format của Server log để hàm Parse tự nhận diện là File
+                // Format: "File: [Tên] (Size: [Size]). To download: /download [Tên]"
+                std::string fake_content = "File: " + fname + " (Size: " + std::to_string(size) + "). To download: /download " + fname;
+                
+                // Thêm vào UI
+                ParseAndAddMessage(hdr.target_id, hdr.sender_id, fake_content, false);
+            }
+            // ---------------------
+
             std::lock_guard<std::mutex> lock(g_State.data_mutex);
             _mkdir("downloads");
             std::string save_path = "downloads/" + fname;
+            
+            // Logic cũ: Tự động lưu file đang stream tới vào ổ cứng
             g_State.download_state.fp = fopen(save_path.c_str(), "wb");
             g_State.download_state.filename = fname;
             g_State.download_state.total_size = size;
