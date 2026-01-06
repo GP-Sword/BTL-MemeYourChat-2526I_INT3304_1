@@ -113,6 +113,7 @@ void topic_remove_socket(SOCKET sock) {
     LeaveCriticalSection(&g_topics_lock);
 }
 
+//
 void topic_route_msg(SOCKET sender_sock, PacketHeader *hdr, const char *payload) {
     EnterCriticalSection(&g_topics_lock);
     Topic *t = find_topic(hdr->target_id);
