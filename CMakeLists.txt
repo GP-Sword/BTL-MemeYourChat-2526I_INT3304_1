@@ -46,5 +46,6 @@ target_link_libraries(ChatClient PRIVATE
     ws2_32 
     imm32
     gdi32
+    comdlg32     # để dùng được hộp thoại chọn file của Windows.
     "-mconsole"  # <--- THÊM DÒNG NÀY ĐỂ ÉP DÙNG HÀM main()
 )
