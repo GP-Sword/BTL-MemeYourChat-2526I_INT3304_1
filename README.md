@@ -119,3 +119,9 @@ Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào
 
 Linux:
 - Packet: sudo apt-get install cmake build-essential libglfw3-dev libgl1-mesa-dev pkg-config
+
+Compile frontend trên Linux:
+cd ~/BTL-MemeYourChat-2526I_INT3304_1/build
+rm -rf * # Xóa cache cũ
+cmake ..
+make
