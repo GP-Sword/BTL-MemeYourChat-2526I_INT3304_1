@@ -27,6 +27,10 @@ int isMyTurn = 0;
 int isGameOver = 0;
 int sock = -1;
 
+void error_callback(int error, const char* description) {
+    fprintf(stderr, "[GLFW ERROR] (%d): %s\n", error, description);
+}
+
 // --- DRAWING HELPERS ---
 void draw_circle(float cx, float cy, float r, int segments) {
     glBegin(GL_LINE_LOOP);
@@ -48,21 +52,18 @@ void draw_x(float cx, float cy, float r) {
 
 // --- NETWORK THREAD ---
 void* network_thread(void* arg) {
+    printf("[NET] Connecting to %s:%d...\n", SERVER_ADDRESS, SERVER_PORT);
     sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv_addr;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(SERVER_PORT);
     
-    // Lưu ý: Nếu server chạy máy khác, hãy đổi IP này
-    if(inet_pton(AF_INET, SERVER_ADDRESS, &serv_addr.sin_addr) <= 0) {
-        strcpy(statusMessage, "Invalid Address");
-        return NULL;
-    }
-
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        strcpy(statusMessage, "Connection Failed! Is server running?");
+        perror("[NET] Connection Failed");
+        strcpy(statusMessage, "Connection Failed!");
         return NULL;
     }
+    printf("[NET] Connected!\n");
 
     char buffer[1024];
     while (1) {
@@ -146,10 +147,28 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 
 // --- MAIN ---
 int main(void) {
-    if (!glfwInit()) return -1;
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+    
+    printf("[MAIN] Starting Client...\n");
 
-    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "TicTacToe 8x8 (Linux Client)", NULL, NULL);
-    if (!window) { glfwTerminate(); return -1; }
+    glfwSetErrorCallback(error_callback);
+
+    if (!glfwInit()) {
+        printf("[MAIN] FAILURE: glfwInit() failed!\n");
+        printf("[HINT] If you are on WSL/Server, do you have a Display?\n");
+        printf("[HINT] Check 'echo $DISPLAY'. If empty, UI cannot start.\n");
+        return -1;
+    }
+    printf("[MAIN] GLFW Initialized.\n");
+
+    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "TicTacToe Linux", NULL, NULL);
+    if (!window) {
+        printf("[MAIN] FAILURE: glfwCreateWindow() failed!\n");
+        glfwTerminate();
+        return -1;
+    }
+    printf("[MAIN] Window created successfully.\n");
 
     glfwMakeContextCurrent(window);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
@@ -213,5 +232,6 @@ int main(void) {
 
     if (sock != -1) close(sock);
     glfwTerminate();
+    printf("[MAIN] Exiting.\n");
     return 0;
 }
