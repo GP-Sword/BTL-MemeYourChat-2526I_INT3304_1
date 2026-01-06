@@ -236,6 +236,9 @@ static void show_help(void) {
     printf(" /listusers          List available groups\n");
     printf(" /pm <user> <msg>    Private message\n");
     printf(" /file <path>        Send file to current group\n");
+    printf(" /download <file>    Download file from current group\n");
+    printf(" /filepm             Send file in private message\n");
+    printf(" /dlpm <file>        Download file from private message\n");
     printf(" /quit               Exit\n");
     printf(" <text>              Send message to CURRENT GROUP (%s)\n", g_current_group);
     printf("----------------\n");
