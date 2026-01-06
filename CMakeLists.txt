@@ -61,3 +61,11 @@ elseif(UNIX AND NOT APPLE)
     target_include_directories(ChatClient PRIVATE ${GLFW3_INCLUDE_DIRS})
     target_link_libraries(ChatClient PRIVATE ${GLFW3_LIBRARIES} OpenGL::GL pthread dl)
 endif()
+
+# ==========================================
+# TỰ ĐỘNG COPY RESOURCES (FONT, IMAGES...)
+# ==========================================
+
+# Lệnh này sẽ copy file SVN-Arial.ttf từ thư mục chứa code (CMAKE_SOURCE_DIR)
+# vào thư mục chứa file exe (CMAKE_BINARY_DIR)
+file(COPY "${CMAKE_SOURCE_DIR}/SVN-Arial.ttf" DESTINATION "${CMAKE_BINARY_DIR}")

@@ -315,6 +315,28 @@ int main(int argc, char** argv) {
     
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    // Tải font từ file. Tham số: 
+    // 1. Tên file
+    // 2. Kích thước (pixels)
+    // 3. Config (NULL)
+    // 4. Glyph Ranges (Quan trọng để hiện tiếng Việt: GetGlyphRangesVietnamese)
+    
+    // Ví dụ tải font Roboto, cỡ chữ 18.0f
+    // Lưu ý: Đảm bảo file .ttf nằm cùng chỗ với file .exe
+    ImFont* font = io.Fonts->AddFontFromFileTTF("SVN-Arial.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    
+    // Nếu không tìm thấy file font, nó sẽ crash hoặc dùng font xấu mặc định.
+    // Nên kiểm tra null (tùy chọn):
+    if (font == NULL) {
+        printf("Khong tim thay file font! Se dung font mac dinh.\n");
+        io.Fonts->AddFontDefault();
+    }
+    // -----------------------------------
+    
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
