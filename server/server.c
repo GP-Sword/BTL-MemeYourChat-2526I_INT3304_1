@@ -127,9 +127,11 @@ DWORD WINAPI client_thread(LPVOID arg) {
                         // ...
                      }
                 } else if (strcmp(payload, "LIST") == 0) {
-                    // ...
+                    topic_get_list(hdr.target_id, 100);
                 }
                 break;
+            case LTM_USERS_CMD:
+                db_list_users();
             case LTM_MESSAGE:
                 printf("[SERVER] MSG from %s to %s\n", hdr.sender_id, hdr.target_id);
                 history_log(hdr.target_id, hdr.sender_id, "MSG", payload);

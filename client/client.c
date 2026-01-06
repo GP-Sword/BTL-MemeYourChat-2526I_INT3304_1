@@ -233,6 +233,7 @@ static void show_help(void) {
     printf(" /join <name>        Join a group (and switch chat context)\n");
     printf(" /leave <name>       Leave a group\n");
     printf(" /list               List available groups\n");
+    printf(" /listusers          List available groups\n");
     printf(" /pm <user> <msg>    Private message\n");
     printf(" /file <path>        Send file to current group\n");
     printf(" /quit               Exit\n");
@@ -325,6 +326,8 @@ int main(int argc, char *argv[]) {
         }
         else if (strncmp(input, "/list", 5) == 0) {
             send_packet(LTM_GROUP_CMD, "", "LIST");
+        }else if (strncmp(input, "/listusers", 10) == 0) {
+            send_packet(LTM_USERS_CMD, "", "LISTUSERS");
         }
         else if (strncmp(input, "/join ", 6) == 0) {
             char target[MAX_ID_LEN];

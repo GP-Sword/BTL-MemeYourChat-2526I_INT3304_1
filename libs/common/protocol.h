@@ -22,6 +22,7 @@ typedef enum {
     LTM_DOWNLOAD,
     LTM_ERROR,
     LTM_GROUP_CMD,
+    LTM_USERS_CMD,
 
     LTM_AUTH_REQ, 
     LTM_AUTH_RESP 

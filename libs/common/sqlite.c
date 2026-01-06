@@ -114,3 +114,40 @@ int db_create_user(const char *username, const char *password) {
     sqlite3_finalize(stmt);
     return 1;
 }
+
+void db_list_users(void) {
+    if (!g_user_db) {
+        fprintf(stderr, "[SERVER] db_list_users: chưa init db.\n");
+        return;
+    }
+
+    const char *sql = "SELECT username FROM users ORDER BY username;";
+    sqlite3_stmt *stmt = NULL;
+
+    int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "[SERVER] db_list_users: prepare failed: %s\n",
+                sqlite3_errmsg(g_user_db));
+        return;
+    }
+
+    printf("[SERVER] Danh sách các user:\n");
+    int has_any = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const unsigned char *uname = sqlite3_column_text(stmt, 0);
+        printf("  - %s\n", uname ? (const char *)uname : "(null)");
+        has_any = 1;
+    }
+
+    if (!has_any) {
+        printf("  (no users found)\n");
+    }
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "[DB] db_list_users: error: %s\n",
+                sqlite3_errmsg(g_user_db));
+    }
+
+    sqlite3_finalize(stmt);
+}
