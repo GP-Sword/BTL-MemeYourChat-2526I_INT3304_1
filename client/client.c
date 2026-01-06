@@ -235,6 +235,7 @@ void* receiver_thread(void* arg)
                         printf("[%s] %s\n", hdr.target_id, payload);
                     }
                 }
+                break;
             case LTM_ERROR:
                 printf("[SERVER ERROR] %s\n", payload);
                 break;
