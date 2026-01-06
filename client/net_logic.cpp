@@ -108,7 +108,27 @@ void ReceiverLoop() {
         }
         std::string str_payload = std::string(payload);
 
-        if (hdr.type == LTM_MESSAGE) {
+        // --- XỬ LÝ LOGIC ---
+        if (hdr.type == LTM_ERROR) {
+            std::cout << "[SERVER MSG] " << str_payload << "\n";
+            
+            std::lock_guard<std::mutex> lock(g_State.data_mutex);
+            // Cập nhật trạng thái để hiển thị lên UI
+            if (str_payload == "REGISTER_OK") {
+                g_State.login_status = "Registration successful! Please Login.";
+            } else if (str_payload == "REGISTER_FAILED") {
+                g_State.login_status = "Registration failed (User exists?).";
+            } else if (str_payload == "INVALID_PASSWORD") {
+                g_State.login_status = "Invalid Password.";
+                g_State.is_logged_in = false;
+            } else if (str_payload == "USER_NOT_EXISTS") {
+                g_State.login_status = "User does not exist.";
+                g_State.is_logged_in = false;
+            } else {
+                g_State.login_status = str_payload;
+            }
+        } 
+        else if (hdr.type == LTM_MESSAGE) {
             ParseAndAddMessage(hdr.target_id, hdr.sender_id, str_payload, false);
         }
         else if (hdr.type == LTM_HISTORY) {
@@ -201,6 +221,22 @@ void Net_Login(const char* user, const char* pass) {
 
     send_all(g_sock, &hdr, sizeof(hdr));
     send_all(g_sock, payload, hdr.payload_size);
+}
+
+void Net_Register(const char* user, const char* pass) {
+    // Payload chỉ chứa password (theo logic server.c)
+    // Server sẽ lấy sender_id làm username
+    
+    PacketHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    
+    hdr.type = LTM_REGISTER;
+    hdr.payload_size = (uint32_t)strlen(pass);
+    strcpy(hdr.target_id, "server");
+    strcpy(hdr.sender_id, user);
+
+    send_all(g_sock, &hdr, sizeof(hdr));
+    send_all(g_sock, pass, hdr.payload_size);
 }
 
 void Net_Disconnect() {

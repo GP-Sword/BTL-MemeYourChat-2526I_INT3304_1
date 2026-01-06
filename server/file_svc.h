@@ -1,7 +1,7 @@
 #ifndef FILE_SVC_H
 #define FILE_SVC_H
 
-#include <winsock2.h>
+#include "../libs/common/os_defs.h"
 #include "../libs/common/protocol.h"
 
 void file_svc_init(void);

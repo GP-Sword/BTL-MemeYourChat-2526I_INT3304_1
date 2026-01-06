@@ -5,10 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <direct.h>
-
-#include <winsock2.h>
-#include <Ws2tcpip.h>
+#include "../libs/common/os_defs.h"
 #pragma comment(lib, "Ws2_32.lib")
 
 #include "../libs/common/protocol.h"
@@ -147,7 +144,12 @@ static int parse_file_meta(const char *payload, char *filename, size_t filename_
 
 // --- Thread & Flow ---
 
-DWORD WINAPI receiver_thread(LPVOID arg) {
+#ifdef _WIN32
+DWORD WINAPI receiver_thread(LPVOID arg)
+#else
+void* receiver_thread(void* arg)
+#endif
+{
     (void)arg;
     while (g_running) {
         PacketHeader hdr;
@@ -233,6 +235,7 @@ DWORD WINAPI receiver_thread(LPVOID arg) {
                         printf("[%s] %s\n", hdr.target_id, payload);
                     }
                 }
+                break;
             case LTM_ERROR:
                 printf("[SERVER ERROR] %s\n", payload);
                 break;
@@ -326,7 +329,14 @@ int main(int argc, char *argv[]) {
     if (auth_flow(ip, port) != 0) return 0;
 
     // Start Chat
+#ifdef _WIN32
     CreateThread(NULL, 0, receiver_thread, NULL, 0, NULL);
+#else
+    pthread_t tid;
+    pthread_create(&tid, NULL, receiver_thread, NULL);
+    pthread_detach(tid);
+#endif
+
     show_help();
 
     char input[INPUT_BUF_SIZE];

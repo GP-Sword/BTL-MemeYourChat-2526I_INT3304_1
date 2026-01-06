@@ -36,6 +36,8 @@ struct AppState {
     char password[32] = "";
     bool is_logged_in = false;
 
+    std::string login_status = ""; // Để hiện thông báo lỗi/thành công ở màn hình Login
+
     std::map<std::string, Conversation> conversations;
     std::string current_chat_id = "";
     

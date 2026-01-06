@@ -38,17 +38,58 @@ bool OpenFileDialog(char* buffer, int max_len) {
 
 void RenderLogin() {
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::Begin("Login", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    ImGui::Begin("Login", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
+    
+    ImGui::Text("MemeYourChat Login");
+    ImGui::Separator();
+    
     ImGui::InputText("Server IP", g_State.server_ip, 32);
     ImGui::InputInt("Port", &g_State.server_port);
     ImGui::InputText("Username", g_State.username, 32);
     ImGui::InputText("Password", g_State.password, 32, ImGuiInputTextFlags_Password);
-    if (ImGui::Button("Login", ImVec2(200,0))) {
-        if(Net_Connect(g_State.server_ip, g_State.server_port)) {
-            Net_Login(g_State.username, g_State.password);
-            g_State.is_logged_in = true;
+    
+    ImGui::Separator();
+
+    // Nút Login
+    if (ImGui::Button("Login", ImVec2(120, 0))) {
+        if (strlen(g_State.username) > 0 && strlen(g_State.password) > 0) {
+            g_State.login_status = "Connecting...";
+            if(Net_Connect(g_State.server_ip, g_State.server_port)) {
+                Net_Login(g_State.username, g_State.password);
+                g_State.is_logged_in = true; // Tạm thời set true, nếu server báo lỗi sẽ set false lại
+            } else {
+                g_State.login_status = "Connection Failed!";
+            }
+        } else {
+            g_State.login_status = "Username/Password required!";
         }
     }
+
+    ImGui::SameLine();
+
+    // Nút Register
+    if (ImGui::Button("Register", ImVec2(120, 0))) {
+        if (strlen(g_State.username) > 0 && strlen(g_State.password) > 0) {
+            g_State.login_status = "Registering...";
+            // Register cũng cần connect trước
+            if(Net_Connect(g_State.server_ip, g_State.server_port)) {
+                Net_Register(g_State.username, g_State.password);
+                // Lưu ý: Sau khi register, server sẽ tự đóng kết nối (theo logic server.c)
+                // Client sẽ nhận được thông báo qua ReceiverLoop
+            } else {
+                g_State.login_status = "Connection Failed!";
+            }
+        } else {
+            g_State.login_status = "Username/Password required!";
+        }
+    }
+
+    // Hiển thị trạng thái (Lỗi hoặc Thành công)
+    if (!g_State.login_status.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", g_State.login_status.c_str());
+    }
+
     ImGui::End();
 }
 
