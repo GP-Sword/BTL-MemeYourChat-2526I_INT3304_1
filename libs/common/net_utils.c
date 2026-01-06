@@ -1,5 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
-#include "os_defs.h"
+
 #include "net_utils.h"
 
 int send_all(SOCKET sock, const void *buf, int len) {
