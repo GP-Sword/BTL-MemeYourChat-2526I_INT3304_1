@@ -5,35 +5,64 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h> // Để dùng File Dialog
 #include "state.h"
 #include "net_logic.h"
 #include "../libs/common/protocol.h"
 
-AppState g_State; 
+// --- 1. HEADERS & HÀM CROSS-PLATFORM ---
+#ifdef _WIN32
+    #include <windows.h> // Để dùng File Dialog
+    #include <shellapi.h>
 
-// Hàm mở File Dialog của Windows
-bool OpenFileDialog(char* buffer, int max_len) {
-    OPENFILENAMEA ofn;
-    char szFile[260] = {0};
-    ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFile = szFile;
-    ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrFileTitle = NULL;
-    ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = NULL;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    // Hàm mở File Dialog của Windows
+    bool OpenFileDialog(char* buffer, int max_len) {
+        OPENFILENAMEA ofn;
+        char szFile[260] = {0};
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFileTitle = NULL;
+        ofn.nMaxFileTitle = 0;
+        ofn.lpstrInitialDir = NULL;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
-    if (GetOpenFileNameA(&ofn) == TRUE) {
-        strncpy(buffer, ofn.lpstrFile, max_len);
-        return true;
+        if (GetOpenFileNameA(&ofn) == TRUE) {
+            strncpy(buffer, ofn.lpstrFile, max_len);
+            return true;
+        }
+        return false;
     }
-    return false;
-}
+
+    void LaunchGame() {
+        ShellExecuteA(NULL, "open", "game_client.exe", NULL, NULL, SW_SHOW);
+    }
+#else
+    #include <unistd.h>
+    #include <stdlib.h>
+
+    // Hàm thay thế cho Linux: Nhập đường dẫn từ Terminal
+    // (Vì tích hợp Zenity/GTK phức tạp hơn nhiều)
+    bool OpenFileDialog(char* buffer, int max_len) {
+        printf("\n[LINUX FILE PICKER] Please enter file path:\n> ");
+        if (fgets(buffer, max_len, stdin)) {
+            // Xóa ký tự xuống dòng
+            buffer[strcspn(buffer, "\n")] = 0;
+            return (strlen(buffer) > 0);
+        }
+        return false;
+    }
+
+    void LaunchGame() {
+        // Chạy file game_client (không đuôi .exe) ở chế độ background
+        system("./game_client &");
+    }
+#endif
+// ---------------------------------------
+AppState g_State; 
 
 void RenderLogin() {
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -195,7 +224,8 @@ void RenderChat() {
         if (current_conv) {
             ImGui::Text("Chat: %s", current_conv->name.c_str());
             ImGui::Separator();
-
+            
+            // --- VÙNG HIỂN THỊ LỊCH SỬ CHAT  ---
             ImGui::BeginChild("History", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
             {
                 std::lock_guard<std::mutex> lock(g_State.data_mutex);
@@ -228,74 +258,79 @@ void RenderChat() {
 
             ImGui::Separator();
             // Input Area
+            // 1. Nút Attach
             if (ImGui::Button("Attach...")) {
                 char filepath[260] = {0};
                 if (OpenFileDialog(filepath, 260)) {
                     Net_SendFile(current_conv->id.c_str(), filepath);
                     
                     std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                    Message m;
-                    m.timestamp = time(NULL);
+                    
+                    Message m; 
+                    m.timestamp = time(NULL); 
                     m.sender = g_State.username;
-                    m.content = "Sending file: " + std::string(filepath);
-                    m.is_file = false; 
-                    m.file_name = "";
-                    m.download_id = "";
+                    
+                    // 1. Tách tên file từ đường dẫn đầy đủ
+                    std::string path_str = filepath;
+                    std::string filename = path_str.substr(path_str.find_last_of("/\\") + 1);
+
+                    // 2. Cấu hình tin nhắn dạng FILE
+                    m.is_file = true;            // Quan trọng: Phải là true UI mới vẽ nút file
+                    m.file_name = filename;      // Tên file để hiển thị
+                    m.content = "File: " + filename; // Nội dung fallback
+                    
+                    // Lưu ý: download_id lúc này chưa chính xác 100% (vì server sẽ thêm timestamp vào tên file),
+                    // nhưng để hiển thị đẹp thì tạm chấp nhận được.
+                    m.download_id = filename;    
+                    
                     m.is_history = false;
                     current_conv->messages.push_back(m);
+                    
+                    // ------------------
                 }
             }
+            
             ImGui::SameLine();
             
-            // Xử lý khi ấn Enter
-            if (ImGui::InputText("##Msg", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            // 2. Ô Nhập Text (Input)
+            // Tính toán chiều rộng để chừa chỗ cho 2 nút Send và Game
+            float width = ImGui::GetContentRegionAvail().x - 110; // Trừ đi khoảng 110 pixel cho 2 nút bên phải
+            ImGui::PushItemWidth(width);
+            
+            bool enter_pressed = ImGui::InputText("##Msg", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue);
+            
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            
+            // 3. Nút Send
+            if (ImGui::Button("Send") || enter_pressed) {
                 if (strlen(g_State.input_buffer) > 0) {
                     Net_SendMessage(current_conv->id.c_str(), g_State.input_buffer);
                     
-                    // HIỂN THỊ NGAY
-                    {
-                        std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                        Message m;
-                        m.timestamp = time(NULL);
-                        m.sender = g_State.username;
-                        m.content = g_State.input_buffer;
-                        m.is_file = false;
-                        m.file_name = "";
-                        m.download_id = "";
-                        m.is_history = false;
-                        current_conv->messages.push_back(m);
-                    }
+                    // Hiện ngay lên màn hình
+                    std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                    Message m; m.timestamp = time(NULL); m.sender = g_State.username;
+                    m.content = g_State.input_buffer;
+                    m.is_file = false; m.file_name = ""; m.download_id = ""; m.is_history = false;
+                    current_conv->messages.push_back(m);
 
                     g_State.input_buffer[0] = '\0';
-                    ImGui::SetKeyboardFocusHere(-1);
+                    ImGui::SetKeyboardFocusHere(-1); // Focus lại vào ô chat
                 }
             }
 
+            // 4. Nút Game (ĐẶT CẠNH NÚT SEND)
             ImGui::SameLine();
-            
-            // Xử lý khi ấn nút Send
-            if (ImGui::Button("Send")) {
-                if (strlen(g_State.input_buffer) > 0) {
-                    Net_SendMessage(current_conv->id.c_str(), g_State.input_buffer);
-
-                    // HIỂN THỊ NGAY
-                    {
-                        std::lock_guard<std::mutex> lock(g_State.data_mutex);
-                        Message m;
-                        m.timestamp = time(NULL);
-                        m.sender = g_State.username;
-                        m.content = g_State.input_buffer;
-                        m.is_file = false;
-                        m.file_name = "";
-                        m.download_id = "";
-                        m.is_history = false;
-                        current_conv->messages.push_back(m);
-                    }
-                    g_State.input_buffer[0] = '\0';
-                }
+            // Tô màu cam cho nổi bật
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.0f, 1.0f)); 
+            if (ImGui::Button("X0")) {
+                // Mở game client
+                LaunchGame(); // <--- Gọi hàm wrapper cross-platform
             }
+            ImGui::PopStyleColor();
+            // ----------------------------------------
         } 
-
+        
     ImGui::EndGroup();
     ImGui::End();
 }
@@ -308,6 +343,28 @@ int main(int argc, char** argv) {
     
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    // Tải font từ file. Tham số: 
+    // 1. Tên file
+    // 2. Kích thước (pixels)
+    // 3. Config (NULL)
+    // 4. Glyph Ranges (Quan trọng để hiện tiếng Việt: GetGlyphRangesVietnamese)
+    
+    // Ví dụ tải font Roboto, cỡ chữ 18.0f
+    // Lưu ý: Đảm bảo file .ttf nằm cùng chỗ với file .exe
+    ImFont* font = io.Fonts->AddFontFromFileTTF("SVN-Arial.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    
+    // Nếu không tìm thấy file font, nó sẽ crash hoặc dùng font xấu mặc định.
+    // Nên kiểm tra null (tùy chọn):
+    if (font == NULL) {
+        printf("Khong tim thay file font! Se dung font mac dinh.\n");
+        io.Fonts->AddFontDefault();
+    }
+    // -----------------------------------
+    
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
@@ -332,7 +389,7 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
     
-    printf("[DEBUG] Client PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
+    // printf("[DEBUG] Client PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
 
     Net_Disconnect();
     ImGui_ImplOpenGL3_Shutdown();

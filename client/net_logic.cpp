@@ -2,15 +2,55 @@
 #include "state.h"
 #include "../libs/common/protocol.h"  
 #include "../libs/common/net_utils.h" 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+
+
 #include <thread>
 #include <sstream>
 #include <vector>
 #include <string>
 #include <iostream>
 #include <filesystem> 
-#include <direct.h>   
+
+// --- 1. KHAI BÁO CROSS-PLATFORM ---
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include <direct.h>   // Cho _mkdir
+    
+    #define MKDIR(dir) _mkdir(dir)
+    #define F_TELL _ftelli64
+#else
+    #include <sys/socket.h>
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
+    #include <unistd.h>
+    #include <sys/stat.h> // Cho mkdir
+    #include <string.h>
+    
+    // Định nghĩa lại các kiểu/hàm của Windows sang Linux
+    // Dùng #ifndef để tránh warning nếu đã được define trong os_defs.h
+    
+    #ifndef SOCKET
+    #define SOCKET int
+    #endif
+
+    #ifndef INVALID_SOCKET
+    #define INVALID_SOCKET -1
+    #endif
+
+    #ifndef SOCKET_ERROR
+    #define SOCKET_ERROR -1
+    #endif
+
+    #ifndef closesocket
+    #define closesocket close
+    #endif
+    
+    // Linux mkdir cần mode (0777: quyền đọc ghi đầy đủ)
+    // Macro này chưa có trong os_defs.h nên cứ define bình thường
+    #define MKDIR(dir) mkdir(dir, 0777)
+    #define F_TELL ftell
+#endif
 
 SOCKET g_sock = INVALID_SOCKET;
 volatile bool g_net_running = false;
@@ -92,8 +132,8 @@ void ReceiverLoop() {
         
         if (received <= 0) {
             // IN LỖI CHI TIẾT
-            int err = WSAGetLastError();
-            std::cout << "[CLIENT] Disconnected. recv return: " << received << ", Error Code: " << err << "\n";
+            // int err = WSAGetLastError();
+            // std::cout << "[CLIENT] Disconnected. recv return: " << received << ", Error Code: " << err << "\n";
             g_net_running = false;
             g_State.is_logged_in = false; 
             break;
@@ -154,11 +194,31 @@ void ReceiverLoop() {
         }
         else if (hdr.type == LTM_FILE_META) {
             std::string p = str_payload;
+            // Parse thông tin file
             std::string fname = p.substr(0, p.find('|'));
-            unsigned long long size = std::stoull(p.substr(p.find('|') + 1));
+            unsigned long long size = 0;
+            try {
+                size = std::stoull(p.substr(p.find('|') + 1));
+            } catch (...) {}
+
+            // --- THÊM ĐOẠN NÀY ---
+            // Nếu người gửi KHÁC "SERVER", tức là một User khác đang gửi file vào nhóm/PM
+            // Ta cần hiển thị bong bóng chat để người nhận biết.
+            if (std::string(hdr.sender_id) != "SERVER") {
+                // Tạo một nội dung giả lập giống format của Server log để hàm Parse tự nhận diện là File
+                // Format: "File: [Tên] (Size: [Size]). To download: /download [Tên]"
+                std::string fake_content = "File: " + fname + " (Size: " + std::to_string(size) + "). To download: /download " + fname;
+                
+                // Thêm vào UI
+                ParseAndAddMessage(hdr.target_id, hdr.sender_id, fake_content, false);
+            }
+            // ---------------------
+
             std::lock_guard<std::mutex> lock(g_State.data_mutex);
             _mkdir("downloads");
             std::string save_path = "downloads/" + fname;
+            
+            // Logic cũ: Tự động lưu file đang stream tới vào ổ cứng
             g_State.download_state.fp = fopen(save_path.c_str(), "wb");
             g_State.download_state.filename = fname;
             g_State.download_state.total_size = size;
@@ -192,7 +252,9 @@ void ReceiverLoop() {
 // --- NETWORK FUNCTIONS (ĐÃ SỬA MEMSET) ---
 
 bool Net_Connect(const char* ip, int port) {
-    WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+    #ifdef _WIN32
+        WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa); // Chỉ Windows mới cần dòng này
+    #endif
     g_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (g_sock == INVALID_SOCKET) return false;
     
@@ -241,7 +303,13 @@ void Net_Register(const char* user, const char* pass) {
 
 void Net_Disconnect() {
     g_net_running = false;
-    if(g_sock != INVALID_SOCKET) { closesocket(g_sock); g_sock = INVALID_SOCKET; WSACleanup(); }
+    if(g_sock != INVALID_SOCKET) { 
+        closesocket(g_sock);
+        g_sock = INVALID_SOCKET;
+#ifdef _WIN32
+        WSACleanup(); // Chỉ Cleanup trên Windows
+#endif
+    }
 }
 
 void Net_SendMessage(const char* target, const char* content) {
@@ -276,7 +344,7 @@ void Net_SendFile(const char* target_id, const char* filepath) {
     std::string path_str = filepath;
     std::string filename = path_str.substr(path_str.find_last_of("/\\") + 1);
     fseek(f, 0, SEEK_END);
-    unsigned long long size = _ftelli64(f);
+    unsigned long long size = (unsigned long long)F_TELL(f); // <--- DÙNG MACRO F_TELL
     fseek(f, 0, SEEK_SET);
 
     char meta[512];
@@ -302,7 +370,9 @@ void Net_SendFile(const char* target_id, const char* filepath) {
         strcpy(chunk.sender_id, g_State.username);
         send_all(g_sock, &chunk, sizeof(chunk));
         send_all(g_sock, buf, n);
-        Sleep(1);
+        
+        // Thay Sleep(1) bằng chuẩn C++ để chạy cả 2 OS
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     fclose(f);
 }

@@ -106,3 +106,22 @@ B4: Chạy
 Lưu ý quan trọng (Lỗi thiếu DLL)
 Trước khi chạy Client, bạn phải copy file glfw3.dll từ libs/glfw/lib-mingw-w64/ vào thư mục build/ (nơi chứa file ChatClient.exe). Nếu không sẽ báo lỗi System Error.
 ```
+
+
+# 3.3. Minigame
+Đầu tiên, compile
+```
+gcc game/game_server.c -o game_server.exe -lws2_32
+gcc game/game_client.c -o game_client_win.exe -lgdi32 -luser32 -lws2_32 -mwindows
+```
+
+Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào chơi.
+
+Linux:
+- Packet: sudo apt-get install cmake build-essential libglfw3-dev libgl1-mesa-dev pkg-config
+
+Compile frontend trên Linux:
+cd ~/BTL-MemeYourChat-2526I_INT3304_1/build
+rm -rf * # Xóa cache cũ
+cmake ..
+make

@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
-project(ChatClient)
+project(MemeYourChat)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# --- [QUAN TRỌNG] Link tĩnh để không bị lỗi thiếu DLL ---
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static")
-# ------------------------------------------------------
-
-# 1. Cấu hình ImGui
+# ==========================================
+# 1. CẤU HÌNH CHUNG
+# ==========================================
 set(IMGUI_DIR "libs/imgui")
 file(GLOB IMGUI_SOURCES 
     "${IMGUI_DIR}/*.cpp"
@@ -16,13 +14,7 @@ file(GLOB IMGUI_SOURCES
     "${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp"
 )
 
-# 2. Cấu hình GLFW
-set(GLFW_DIR "libs/glfw")
-include_directories(${CMAKE_SOURCE_DIR}/libs/glfw/include)
-link_directories(${CMAKE_SOURCE_DIR}/libs/glfw/lib-mingw-w64)
-
-# 3. Tạo file chạy (Executable)
-# Lưu ý: Không thêm client.c vào đây để tránh trùng hàm main()
+# Tạo file thực thi
 add_executable(ChatClient 
     client/main.cpp 
     client/net_logic.cpp 
@@ -30,22 +22,50 @@ add_executable(ChatClient
     ${IMGUI_SOURCES}
 )
 
-# 4. Include các thư mục Header
 target_include_directories(ChatClient PRIVATE 
-    client
-    libs/common
-    libs/imgui
-    libs/imgui/backends
-    libs/glfw/include
+    ${CMAKE_SOURCE_DIR}/client
+    ${CMAKE_SOURCE_DIR}/libs/common
+    ${CMAKE_SOURCE_DIR}/libs/imgui
+    ${CMAKE_SOURCE_DIR}/libs/imgui/backends
 )
 
-# 5. Link thư viện
-target_link_libraries(ChatClient PRIVATE 
-    glfw3 
-    opengl32 
-    ws2_32 
-    imm32
-    gdi32
-    comdlg32     # để dùng được hộp thoại chọn file của Windows.
-    "-mconsole"  # <--- THÊM DÒNG NÀY ĐỂ ÉP DÙNG HÀM main()
-)
+# ==========================================
+# 2. CẤU HÌNH RIÊNG CHO WINDOWS (Sửa lỗi Linker)
+# ==========================================
+if(WIN32)
+    message(STATUS "Windows Detected - Linking Static GLFW")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static")
+
+    # Include Header
+    target_include_directories(ChatClient PRIVATE libs/glfw/include)
+
+    # --- SỬA LỖI Ở ĐÂY: Trỏ thẳng vào file .a ---
+    # Thay vì bắt CMake tìm, ta đưa đường dẫn cụ thể luôn
+    set(GLFW_LIB "${CMAKE_SOURCE_DIR}/libs/glfw/lib-mingw-w64/libglfw3.a")
+
+    target_link_libraries(ChatClient PRIVATE 
+        ${GLFW_LIB}  # <--- Link file trực tiếp
+        opengl32 
+        ws2_32 
+        imm32
+        gdi32
+        comdlg32
+        "-mconsole"
+    )
+
+elseif(UNIX AND NOT APPLE)
+    # Cấu hình Linux (Giữ nguyên)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GLFW3 REQUIRED glfw3)
+    find_package(OpenGL REQUIRED)
+    target_include_directories(ChatClient PRIVATE ${GLFW3_INCLUDE_DIRS})
+    target_link_libraries(ChatClient PRIVATE ${GLFW3_LIBRARIES} OpenGL::GL pthread dl)
+endif()
+
+# ==========================================
+# TỰ ĐỘNG COPY RESOURCES (FONT, IMAGES...)
+# ==========================================
+
+# Lệnh này sẽ copy file SVN-Arial.ttf từ thư mục chứa code (CMAKE_SOURCE_DIR)
+# vào thư mục chứa file exe (CMAKE_BINARY_DIR)
+file(COPY "${CMAKE_SOURCE_DIR}/SVN-Arial.ttf" DESTINATION "${CMAKE_BINARY_DIR}")
