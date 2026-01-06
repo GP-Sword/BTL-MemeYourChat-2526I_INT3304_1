@@ -77,6 +77,7 @@ DWORD WINAPI client_thread(LPVOID arg) {
                         topic_subscribe(s, user_topic);
                         topic_subscribe(s, "group/global");
                         
+                        history_replay(s, user_topic);
                         history_replay(s, "group/global");
                     } else {
                         send_err(s, "INVALID_PASSWORD");
@@ -120,17 +121,6 @@ DWORD WINAPI client_thread(LPVOID arg) {
                         send_err(s, "GROUP_ALREADY_EXISTS");
                     } else {
                         topic_create(hdr.target_id);
-<<<<<<< HEAD
-                        // Gửi thông báo thành công (Code cũ của bạn)
-                        // ...
-                     }
-                } else if (strcmp(payload, "LIST") == 0) {
-                    topic_get_list(hdr.target_id, 100);
-                }
-                break;
-            // case LTM_USERS_CMD:
-            //     db_list_user();
-=======
                         printf("[SERVER] Created group: %s\n", hdr.target_id);
                         
                         PacketHeader notif = { LTM_MESSAGE, 0, "", "SERVER" };
@@ -155,10 +145,19 @@ DWORD WINAPI client_thread(LPVOID arg) {
                 }
                 break;
             }
->>>>>>> parent of a8797bf (Add Real-time Chat function (Still wrong the Add Group/User Func))
             case LTM_MESSAGE:
                 printf("[SERVER] MSG from %s to %s: %s\n", hdr.sender_id, hdr.target_id, payload);
                 history_log(hdr.target_id, hdr.sender_id, "MSG", payload);
+
+                // Nếu là PM (target bắt đầu bằng "user/"), log thêm vào hộp thư người gửi
+                if (strncmp(hdr.target_id, "user/", 5) == 0) {
+                    char sender_topic[64];
+                    snprintf(sender_topic, sizeof(sender_topic), "user/%s", hdr.sender_id);
+                    
+                    // Lưu vào lịch sử của người gửi để họ xem lại được tin mình đã gửi
+                    history_log(sender_topic, hdr.sender_id, "MSG", payload);
+                }
+
                 topic_route_msg(s, &hdr, payload);
                 break;
             case LTM_FILE_META:
