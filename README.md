@@ -116,3 +116,6 @@ gcc game/game_client.c -o game_client.exe -lgdi32 -luser32 -lws2_32 -mwindows
 ```
 
 Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào chơi.
+
+Linux:
+- Packet: sudo apt-get install cmake build-essential libglfw3-dev libgl1-mesa-dev pkg-config

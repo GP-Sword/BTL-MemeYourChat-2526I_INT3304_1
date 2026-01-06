@@ -32,11 +32,11 @@ add_executable(ChatClient
 
 # 4. Include các thư mục Header
 target_include_directories(ChatClient PRIVATE 
-    client
-    libs/common
-    libs/imgui
-    libs/imgui/backends
-    libs/glfw/include
+    ${CMAKE_SOURCE_DIR}/client
+    ${CMAKE_SOURCE_DIR}/libs/common
+    ${CMAKE_SOURCE_DIR}/libs/imgui
+    ${CMAKE_SOURCE_DIR}/libs/imgui/backends
+    ${CMAKE_SOURCE_DIR}/libs/glfw/include
 )
 
 # 5. Link thư viện
