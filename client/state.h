@@ -1,33 +1,61 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <map>
 #include <mutex>
 
-struct ChatMessage {
+#ifdef _WIN32
+    #include <winsock2.h>
+#else
+    // Linux không dùng winsock2, chỉ cần các kiểu dữ liệu cơ bản
+    #include <netinet/in.h>
+#endif
+
+struct Message {
+    long long timestamp;
     std::string sender;
-    std::string target; // Group or UserID
-    std::string content;
+    std::string content;     
+    bool is_file;            
+    std::string file_name;   
+    std::string download_id; 
     bool is_history;
 };
 
+struct Conversation {
+    std::string id;
+    std::string name;
+    std::vector<Message> messages;
+};
+
+struct DownloadState {
+    bool is_downloading;
+    std::string filename;
+    unsigned long long total_size;
+    unsigned long long received_size;
+    FILE* fp;
+};
+
 struct AppState {
-    // Dữ liệu đăng nhập
+    char server_ip[32] = "127.0.0.1";
+    int server_port = 910;
     char username[32] = "";
     char password[32] = "";
     bool is_logged_in = false;
-    char server_ip[32] = "127.0.0.1";
-    int server_port = 910;
 
-    // Dữ liệu Chat
-    char current_group[64] = "group/global"; // Nhóm đang chọn xem
-    char input_buffer[1024] = "";            // Ô nhập liệu
+    std::string login_status = ""; // Để hiện thông báo lỗi/thành công ở màn hình Login
+
+    std::map<std::string, Conversation> conversations;
+    std::string current_chat_id = "";
     
-    // Danh sách tin nhắn (Cần mutex bảo vệ)
-    std::vector<ChatMessage> messages;
-    std::mutex msg_mutex;
+    char input_buffer[1024] = "";
+    
+    // --- UI INPUTS ---
+    char search_buffer[64] = "";    // Dùng cho Group
+    char pm_search_buffer[64] = ""; // Dùng cho User (MỚI)
 
-    // Danh sách nhóm/contact (Hardcode demo, sau này server gửi về)
-    std::vector<std::string> groups = {"group/global", "group/dev", "group/game"};
+    DownloadState download_state = {false, "", 0, 0, NULL};
+
+    std::mutex data_mutex;
 };
 
-extern AppState g_State; // Biến toàn cục khai báo ở main.cpp
+extern AppState g_State;

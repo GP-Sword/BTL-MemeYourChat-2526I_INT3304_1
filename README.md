@@ -1,12 +1,6 @@
 # BTL-MemeYourChat-2526I_INT3304_1
 BTL môn Lập trình mạng: Xây dựng chương trình chat sử dụng giao thức kiểu publish/subscribe.
 
-## 28/12/25: Sqlite login/register implementation
-- Nhập username vào, nếu là user mới, sẽ ask for password để register. Nếu cũ, nhập pw cũ thì socket tiếp tục kết nối
-- Vấn đề bây h: Wrong pw vẫn thấy các commands, chưa intuitive. K thấy list of registered users (very bad)
-
-## 15/12/25: Basic chatroom function
-
 ## 1. Yêu cầu hệ thống (Prerequisites)
 
 Trước khi bắt đầu, đảm bảo máy tính đã cài đặt các công cụ sau:
@@ -23,20 +17,27 @@ Sau khi setup xong, cấu trúc thư mục chuẩn phải trông như sau:
 ```text
 Project/
 ├── server/
-│   └── server.c
+│   ├── server.c          // File server chính
+│   ├── topic_svc.c       // Xử lý logic liên quan nhóm
+│   ├── file_svc.c        // Xử lý logic liên quan file
+│   └── history.c         // Quản lý lịch sử chat
+│
 ├── client/
 │   ├── main.cpp          // Entry point + ImGui Loop
 │   ├── net_logic.h       // Header hàm xử lý mạng
 │   ├── net_logic.cpp     // Logic mạng (Cải biên từ client.c)
 │   └── state.h           // Struct dữ liệu chung (biến toàn cục)
-├── libs/                   # Thư viện bên ngoài (Quan trọng!)
-│   ├── imgui/              # Source code ImGui
-│   │   ├── backends/       # BẮT BUỘC CÓ (chứa imgui_impl_glfw...)
-│   │   ├── imgui.cpp
-│   │   └── imgui.h ...
+│
+├── libs/                   # Thư viện hỗ trợ
+│   ├── common/             
+│   │   ├── protocol.h       
+│   │   ├── net_utils.h
+│   │   ├── sqlite3.h
+│   │   └── ...
 │   └── glfw/               # Thư viện đồ họa
 │       ├── include/
 │       └── lib-mingw-w64/  # Chứa file .a và .dll
+│
 └── CMakeLists.txt        // File cấu hình build (Dùng CMake cho dễ quản lý)
 
 ```
@@ -45,23 +46,30 @@ Project/
 ## 3. How to run
 # 3.1. Backend
 
-1. gcc server/server.c libs/common/net_utils.c libs/common/sqlite.c libs/common/sqlite3.c -o server_chat.exe -lws2_32
-2. gcc client/client.c common/net_utils.c -o client_chat.exe -lws2_32
-3. Terminal 1: .\server_chat.exe 910
-4. Terminal 2: .\client_chat.exe 127.0.0.1 910 \[username_1\]
-5. Terminal 3: .\client_chat.exe 127.0.0.1 910 \[username_2\]
+1. Chạy `compile_script.bat` (đối với Windows) hoặc `compile_script.sh` (đối với Linux)
+2. Trong Terminal 1: `.\server_chat.exe \[PORT, demo dùng 910\]`
+3. Trong Terminal 2: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_1\]`
+4. Trong Terminal 3: `.\client_chat.exe \[IP, demo dùng 127.0.0.1\] \[PORT, demo dùng 910\] \[username_2\]`
 
 Expected output:
 ```
 Enter your user ID: Alice
 [CLIENT] Connected to 127.0.0.1:910
 [CLIENT] Logged in as Alice. Current group: group/global
-Commands:
-  /join <groupName>         Join a group (topic = group/<groupName>)
-  /pm <userId> <message>    Private message (topic = user/<userId>)
-  /group <groupName>        Set current group (for normal messages)
-  /quit                     Exit
-  <text>                    Send to current group (default group/global)
+  --- COMMANDS ---
+  /create <name>      Create a new group
+  /join <name>        Join a group (and switch chat context)
+  /leave <name>       Leave a group\
+  /list               List available groups
+  /listusers          List available users
+  /pm <user> <msg>    Private message
+  /file <path>        Send file to current group
+  /download <file>    Download file from current group
+  /filepm <name>      Send file in private message
+  /dlpm <file>        Download file from private message
+  /quit               Exit
+  <text>              Send message to CURRENT GROUP group/global
+  ----------------
 text
 [Bob -> group/global] <text>
 [Bob -> user/Alice] sup cutie hyd
@@ -69,9 +77,6 @@ yeah
 [CLIENT] Exiting...
 [CLIENT] Disconnected from server.
 
-
-send file (no quotation marks)
-/filegrp global C:\Users\twtvf\OneDrive\Documents\GitHub\BTL-MemeYourChat-2526I_INT3304_1\gay.txt
 ```
 
 # 3.2. Frontend:
@@ -101,3 +106,22 @@ B4: Chạy
 Lưu ý quan trọng (Lỗi thiếu DLL)
 Trước khi chạy Client, bạn phải copy file glfw3.dll từ libs/glfw/lib-mingw-w64/ vào thư mục build/ (nơi chứa file ChatClient.exe). Nếu không sẽ báo lỗi System Error.
 ```
+
+
+# 3.3. Minigame
+Đầu tiên, compile
+```
+gcc game/game_server.c -o game_server.exe -lws2_32
+gcc game/game_client.c -o game_client_win.exe -lgdi32 -luser32 -lws2_32 -mwindows
+```
+
+Chạy game_server trên 1 terminal riêng rồi vào 2 ChatClient.exe ấn vào chơi.
+
+Linux:
+- Packet: sudo apt-get install cmake build-essential libglfw3-dev libgl1-mesa-dev pkg-config
+
+Compile frontend trên Linux:
+cd ~/BTL-MemeYourChat-2526I_INT3304_1/build
+rm -rf * # Xóa cache cũ
+cmake ..
+make

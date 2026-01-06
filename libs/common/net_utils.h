@@ -7,7 +7,7 @@ extern "C" {
 
 #define WIN32_LEAN_AND_MEAN
 
-#include <WinSock2.h>
+#include "os_defs.h"
 
 int send_all(SOCKET sock, const void *buf, int len);
 int recv_all(SOCKET sock, void *buf, int len);

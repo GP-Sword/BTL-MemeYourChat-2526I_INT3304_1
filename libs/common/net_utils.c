@@ -1,5 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
-#include <WinSock2.h>
+
 #include "net_utils.h"
 
 int send_all(SOCKET sock, const void *buf, int len) {
@@ -12,7 +12,7 @@ int send_all(SOCKET sock, const void *buf, int len) {
         }
         total += sent; // ghi đủ len byte
     }
-    return 0;
+    return total;
 }
 
 int recv_all(SOCKET sock, void *buf, int len) {
@@ -25,6 +25,6 @@ int recv_all(SOCKET sock, void *buf, int len) {
         }
         total += recvd;
     }
-    return 0;
+    return total;
 }
 

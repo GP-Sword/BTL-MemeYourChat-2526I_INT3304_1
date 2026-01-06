@@ -22,12 +22,14 @@ typedef enum {
     LTM_DOWNLOAD,
     LTM_ERROR,
     LTM_GROUP_CMD,
+    LTM_USERS_CMD,
 
     LTM_AUTH_REQ, // check if user wanna login or reg
     LTM_AUTH_RESP 
 } PacketType;
 
 #pragma pack(push, 1)
+
 typedef struct {
     uint8_t type;
     uint32_t payload_size;
@@ -35,9 +37,10 @@ typedef struct {
     char sender_id[MAX_ID_LEN]; // user id người gửi
 } PacketHeader;
 
+#pragma pack(pop)
+
 #ifdef __cplusplus
 }
 #endif
 
-#pragma pack(pop)
 #endif

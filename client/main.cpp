@@ -2,150 +2,396 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include "state.h"
 #include "net_logic.h"
+#include "../libs/common/protocol.h"
 
-AppState g_State; // Khởi tạo biến state
+// --- 1. HEADERS & HÀM CROSS-PLATFORM ---
+#ifdef _WIN32
+    #include <windows.h> // Để dùng File Dialog
+    #include <shellapi.h>
+
+    // Hàm mở File Dialog của Windows
+    bool OpenFileDialog(char* buffer, int max_len) {
+        OPENFILENAMEA ofn;
+        char szFile[260] = {0};
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = NULL;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFileTitle = NULL;
+        ofn.nMaxFileTitle = 0;
+        ofn.lpstrInitialDir = NULL;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+        if (GetOpenFileNameA(&ofn) == TRUE) {
+            strncpy(buffer, ofn.lpstrFile, max_len);
+            return true;
+        }
+        return false;
+    }
+
+    void LaunchGame() {
+        ShellExecuteA(NULL, "open", "game_client.exe", NULL, NULL, SW_SHOW);
+    }
+#else
+    #include <unistd.h>
+    #include <stdlib.h>
+
+    // Hàm thay thế cho Linux: Nhập đường dẫn từ Terminal
+    // (Vì tích hợp Zenity/GTK phức tạp hơn nhiều)
+    bool OpenFileDialog(char* buffer, int max_len) {
+        printf("\n[LINUX FILE PICKER] Please enter file path:\n> ");
+        if (fgets(buffer, max_len, stdin)) {
+            // Xóa ký tự xuống dòng
+            buffer[strcspn(buffer, "\n")] = 0;
+            return (strlen(buffer) > 0);
+        }
+        return false;
+    }
+
+    void LaunchGame() {
+        // Chạy file game_client (không đuôi .exe) ở chế độ background
+        system("./game_client &");
+    }
+#endif
+// ---------------------------------------
+AppState g_State; 
 
 void RenderLogin() {
-    // Căn giữa màn hình
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::Begin("Login", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+    ImGui::Begin("Login", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
+    
+    ImGui::Text("MemeYourChat Login");
+    ImGui::Separator();
     
     ImGui::InputText("Server IP", g_State.server_ip, 32);
     ImGui::InputInt("Port", &g_State.server_port);
-    ImGui::Separator();
     ImGui::InputText("Username", g_State.username, 32);
     ImGui::InputText("Password", g_State.password, 32, ImGuiInputTextFlags_Password);
     
-    if (ImGui::Button("Connect & Login", ImVec2(200, 0))) {
-        if (Net_Connect(g_State.server_ip, g_State.server_port)) {
-            Net_Login(g_State.username, g_State.password);
-            g_State.is_logged_in = true;
+    ImGui::Separator();
+
+    // Nút Login
+    if (ImGui::Button("Login", ImVec2(120, 0))) {
+        if (strlen(g_State.username) > 0 && strlen(g_State.password) > 0) {
+            g_State.login_status = "Connecting...";
+            if(Net_Connect(g_State.server_ip, g_State.server_port)) {
+                Net_Login(g_State.username, g_State.password);
+                g_State.is_logged_in = true; // Tạm thời set true, nếu server báo lỗi sẽ set false lại
+            } else {
+                g_State.login_status = "Connection Failed!";
+            }
+        } else {
+            g_State.login_status = "Username/Password required!";
         }
     }
+
+    ImGui::SameLine();
+
+    // Nút Register
+    if (ImGui::Button("Register", ImVec2(120, 0))) {
+        if (strlen(g_State.username) > 0 && strlen(g_State.password) > 0) {
+            g_State.login_status = "Registering...";
+            // Register cũng cần connect trước
+            if(Net_Connect(g_State.server_ip, g_State.server_port)) {
+                Net_Register(g_State.username, g_State.password);
+                // Lưu ý: Sau khi register, server sẽ tự đóng kết nối (theo logic server.c)
+                // Client sẽ nhận được thông báo qua ReceiverLoop
+            } else {
+                g_State.login_status = "Connection Failed!";
+            }
+        } else {
+            g_State.login_status = "Username/Password required!";
+        }
+    }
+
+    // Hiển thị trạng thái (Lỗi hoặc Thành công)
+    if (!g_State.login_status.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", g_State.login_status.c_str());
+    }
+
     ImGui::End();
 }
 
 void RenderChat() {
-    // Bố cục toàn màn hình
     ImGui::SetNextWindowPos(ImVec2(0,0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("Main", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize);
 
-    // --- CỘT TRÁI: DANH SÁCH NHÓM ---
-    ImGui::BeginChild("LeftPane", ImVec2(200, 0), true);
-    ImGui::Text("Contacts / Groups");
+    // --- SIDEBAR ---
+    ImGui::BeginChild("LeftPane", ImVec2(250, 0), true);
+    ImGui::Text("User: %s", g_State.username);
+    
+    // Hiển thị trạng thái Download (Giữ nguyên)
+    {
+        std::lock_guard<std::mutex> lock(g_State.data_mutex);
+        if (g_State.download_state.is_downloading) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0,1,0,1), "Downloading...");
+            float progress = 0.0f;
+            if (g_State.download_state.total_size > 0)
+                progress = (float)g_State.download_state.received_size / g_State.download_state.total_size;
+            ImGui::ProgressBar(progress, ImVec2(-1, 0));
+        }
+    }
+
     ImGui::Separator();
-    for (auto& grp : g_State.groups) {
-        if (ImGui::Selectable(grp.c_str(), g_State.current_group == grp)) {
-            strcpy(g_State.current_group, grp.c_str());
-            // TODO: Gửi gói tin Subscribe tới server
+    
+    // --- 1. JOIN GROUP ---
+    ImGui::TextDisabled("Groups");
+    ImGui::InputTextWithHint("##JoinGrp", "Group Name...", g_State.search_buffer, 64);
+    ImGui::SameLine();
+    if (ImGui::Button("Join##Grp")) {
+        if (strlen(g_State.search_buffer) > 0) {
+            Net_JoinGroup(g_State.search_buffer);
+            g_State.search_buffer[0] = '\0';
+        }
+    }
+
+    // --- 2. ADD USER (CHAT RIÊNG) ---
+    ImGui::Spacing();
+    ImGui::TextDisabled("Direct Messages");
+    ImGui::InputTextWithHint("##AddPM", "Username...", g_State.pm_search_buffer, 64);
+    ImGui::SameLine();
+    if (ImGui::Button("Chat##PM")) {
+        if (strlen(g_State.pm_search_buffer) > 0) {
+            std::string user = g_State.pm_search_buffer;
+            
+            // Không tự chat với chính mình
+            if (user != std::string(g_State.username)) {
+                std::string topic = "user/" + user;
+                
+                std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                if (g_State.conversations.find(topic) == g_State.conversations.end()) {
+                    // Tạo hội thoại local ngay lập tức
+                    Conversation new_conv;
+                    new_conv.id = topic;
+                    new_conv.name = user; // Tên hiển thị là tên user
+                    g_State.conversations[topic] = new_conv;
+                }
+                // Chuyển sang khung chat này
+                g_State.current_chat_id = topic;
+                
+                // Clear ô nhập
+                g_State.pm_search_buffer[0] = '\0';
+            }
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Conversations");
+    
+    // --- LIST CONVERSATIONS ---
+    {
+        std::lock_guard<std::mutex> lock(g_State.data_mutex);
+        for (auto& [id, conv] : g_State.conversations) {
+            bool is_selected = (g_State.current_chat_id == id);
+            
+            // Đặt màu khác nhau cho Group và User để dễ phân biệt
+            if (id.find("group/") == 0) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 1.0f, 1.0f)); // Xanh nhạt cho Group
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 1.0f, 0.6f, 1.0f)); // Xanh lá cho User
+            }
+
+            if (ImGui::Selectable(conv.name.c_str(), is_selected)) {
+                g_State.current_chat_id = id;
+            }
+            ImGui::PopStyleColor();
         }
     }
     ImGui::EndChild();
 
     ImGui::SameLine();
 
-    // --- CỘT PHẢI: CHAT CONTENT ---
+    // --- CHAT BOX (Phần bên phải giữ nguyên) ---
     ImGui::BeginGroup();
-        // 1. Header
-        ImGui::Text("Chatting in: %s", g_State.current_group);
-        ImGui::Separator();
-
-        // 2. Message History (Vùng cuộn)
-        ImGui::BeginChild("ChatHistory", ImVec2(0, -ImGui::GetFrameHeightWithSpacing())); 
-        
-        // Lock mutex để đọc tin nhắn an toàn
+        Conversation* current_conv = nullptr;
         {
-            std::lock_guard<std::mutex> lock(g_State.msg_mutex);
-            for (auto& msg : g_State.messages) {
-                // Chỉ hiện tin nhắn của nhóm đang chọn
-                if (msg.target == std::string(g_State.current_group) || 
-                   (msg.target.find("user/") == 0 && msg.sender == std::string(g_State.current_group).substr(5))) // Logic lọc đơn giản
-                {
-                    ImGui::TextColored(ImVec4(0,1,0,1), "[%s]:", msg.sender.c_str());
+            std::lock_guard<std::mutex> lock(g_State.data_mutex);
+            if (g_State.conversations.count(g_State.current_chat_id))
+                current_conv = &g_State.conversations[g_State.current_chat_id];
+        }
+
+        if (current_conv) {
+            ImGui::Text("Chat: %s", current_conv->name.c_str());
+            ImGui::Separator();
+            
+            // --- VÙNG HIỂN THỊ LỊCH SỬ CHAT  ---
+            ImGui::BeginChild("History", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
+            {
+                std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                for (auto& msg : current_conv->messages) {
+                    ImGui::TextDisabled("[%lld]", msg.timestamp); ImGui::SameLine();
+                    
+                    // Highlight người gửi
+                    if (msg.sender == std::string(g_State.username)) {
+                        ImGui::TextColored(ImVec4(0,1,1,1), "Me:"); 
+                    } else {
+                        ImGui::TextColored(ImVec4(1,1,0,1), "%s:", msg.sender.c_str());
+                    }
                     ImGui::SameLine();
-                    ImGui::TextWrapped("%s", msg.content.c_str());
-                }
-            }
-            // Auto scroll xuống dưới cùng khi có tin mới
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-                ImGui::SetScrollHereY(1.0f);
-        }
-        ImGui::EndChild();
-
-        // 3. Input Area
-        ImGui::Separator();
-        // Cờ ImGuiInputTextFlags_EnterReturnsTrue giúp phát hiện nút Enter
-        if (ImGui::InputText("Message", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue)) {
-            if (strlen(g_State.input_buffer) > 0) {
-                // Gửi mạng
-                Net_SendMessage(g_State.current_group, g_State.input_buffer);
-                
-                // Hiển thị cục bộ luôn cho mượt (Optimistic UI)
-                {
-                    std::lock_guard<std::mutex> lock(g_State.msg_mutex);
-                    g_State.messages.push_back({g_State.username, g_State.current_group, g_State.input_buffer, false});
+                    
+                    if (msg.is_file) {
+                        std::string label = "[FILE] " + msg.file_name + " (Click to Download)";
+                        if (ImGui::SmallButton(label.c_str())) {
+                            Net_RequestDownload(current_conv->id.c_str(), msg.download_id.c_str());
+                        }
+                    } else {
+                        ImGui::TextWrapped("%s", msg.content.c_str());
+                    }
                 }
                 
-                // Xóa buffer
-                g_State.input_buffer[0] = '\0';
-                ImGui::SetKeyboardFocusHere(-1); // Focus lại vào ô nhập
+                // Auto scroll xuống dưới cùng nếu đang ở dưới
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                    ImGui::SetScrollHereY(1.0f);
             }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Send")) { 
-            /* Logic nút Send giống logic Enter ở trên */ 
-        }
+            ImGui::EndChild();
 
+            ImGui::Separator();
+            // Input Area
+            // 1. Nút Attach
+            if (ImGui::Button("Attach...")) {
+                char filepath[260] = {0};
+                if (OpenFileDialog(filepath, 260)) {
+                    Net_SendFile(current_conv->id.c_str(), filepath);
+                    
+                    std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                    
+                    Message m; 
+                    m.timestamp = time(NULL); 
+                    m.sender = g_State.username;
+                    
+                    // 1. Tách tên file từ đường dẫn đầy đủ
+                    std::string path_str = filepath;
+                    std::string filename = path_str.substr(path_str.find_last_of("/\\") + 1);
+
+                    // 2. Cấu hình tin nhắn dạng FILE
+                    m.is_file = true;            // Quan trọng: Phải là true UI mới vẽ nút file
+                    m.file_name = filename;      // Tên file để hiển thị
+                    m.content = "File: " + filename; // Nội dung fallback
+                    
+                    // Lưu ý: download_id lúc này chưa chính xác 100% (vì server sẽ thêm timestamp vào tên file),
+                    // nhưng để hiển thị đẹp thì tạm chấp nhận được.
+                    m.download_id = filename;    
+                    
+                    m.is_history = false;
+                    current_conv->messages.push_back(m);
+                    
+                    // ------------------
+                }
+            }
+            
+            ImGui::SameLine();
+            
+            // 2. Ô Nhập Text (Input)
+            // Tính toán chiều rộng để chừa chỗ cho 2 nút Send và Game
+            float width = ImGui::GetContentRegionAvail().x - 110; // Trừ đi khoảng 110 pixel cho 2 nút bên phải
+            ImGui::PushItemWidth(width);
+            
+            bool enter_pressed = ImGui::InputText("##Msg", g_State.input_buffer, 1024, ImGuiInputTextFlags_EnterReturnsTrue);
+            
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            
+            // 3. Nút Send
+            if (ImGui::Button("Send") || enter_pressed) {
+                if (strlen(g_State.input_buffer) > 0) {
+                    Net_SendMessage(current_conv->id.c_str(), g_State.input_buffer);
+                    
+                    // Hiện ngay lên màn hình
+                    std::lock_guard<std::mutex> lock(g_State.data_mutex);
+                    Message m; m.timestamp = time(NULL); m.sender = g_State.username;
+                    m.content = g_State.input_buffer;
+                    m.is_file = false; m.file_name = ""; m.download_id = ""; m.is_history = false;
+                    current_conv->messages.push_back(m);
+
+                    g_State.input_buffer[0] = '\0';
+                    ImGui::SetKeyboardFocusHere(-1); // Focus lại vào ô chat
+                }
+            }
+
+            // 4. Nút Game (ĐẶT CẠNH NÚT SEND)
+            ImGui::SameLine();
+            // Tô màu cam cho nổi bật
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.0f, 1.0f)); 
+            if (ImGui::Button("X0")) {
+                // Mở game client
+                LaunchGame(); // <--- Gọi hàm wrapper cross-platform
+            }
+            ImGui::PopStyleColor();
+            // ----------------------------------------
+        } 
+        
     ImGui::EndGroup();
-
     ImGui::End();
 }
 
-int main(int, char**) {
-    // Setup Window (GLFW)
+int main(int argc, char** argv) {
     if (!glfwInit()) return 1;
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "My Chat App", NULL, NULL);
-    if (window == NULL) return 1;
+    GLFWwindow* window = glfwCreateWindow(1000, 600, "Chat", NULL, NULL);
+    if (!window) return 1;
     glfwMakeContextCurrent(window);
-
-    // Setup ImGui
+    
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::StyleColorsDark(); // Giao diện tối
+
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    // Tải font từ file. Tham số: 
+    // 1. Tên file
+    // 2. Kích thước (pixels)
+    // 3. Config (NULL)
+    // 4. Glyph Ranges (Quan trọng để hiện tiếng Việt: GetGlyphRangesVietnamese)
+    
+    // Ví dụ tải font Roboto, cỡ chữ 18.0f
+    // Lưu ý: Đảm bảo file .ttf nằm cùng chỗ với file .exe
+    ImFont* font = io.Fonts->AddFontFromFileTTF("SVN-Arial.ttf", 30.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
+    
+    // Nếu không tìm thấy file font, nó sẽ crash hoặc dùng font xấu mặc định.
+    // Nên kiểm tra null (tùy chọn):
+    if (font == NULL) {
+        printf("Khong tim thay file font! Se dung font mac dinh.\n");
+        io.Fonts->AddFontDefault();
+    }
+    // -----------------------------------
+    
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
-    // Main Loop (Vòng lặp vĩnh cửu giống Game)
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-
-        // Start frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // Logic UI
         if (!g_State.is_logged_in) {
             RenderLogin();
         } else {
             RenderChat();
         }
 
-        // Render
         ImGui::Render();
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(0.45f, 0.55f, 0.60f, 1.00f);
+        int w, h;
+        glfwGetFramebufferSize(window, &w, &h);
+        glViewport(0,0,w,h);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
+    
+    // printf("[DEBUG] Client PacketHeader size: %llu bytes (Must be 69)\n", sizeof(PacketHeader));
 
-    // Cleanup
+    Net_Disconnect();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

@@ -10,7 +10,7 @@ static sqlite3 *g_user_db = NULL;  // global DB handle
 int db_init(const char *db_path) {
     int rc = sqlite3_open(db_path, &g_user_db);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB] Cannot open %s: %s\n",
+        fprintf(stderr, "[SERVER] Cannot open %s: %s\n",
                 db_path, sqlite3_errmsg(g_user_db));
         return -1;
     }
@@ -24,12 +24,12 @@ int db_init(const char *db_path) {
     char *errmsg = NULL;
     rc = sqlite3_exec(g_user_db, create_sql, NULL, NULL, &errmsg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB] Failed to create users table: %s\n", errmsg);
+        fprintf(stderr, "[SERVER] Failed to create users table: %s\n", errmsg);
         sqlite3_free(errmsg);
         return -1;
     }
 
-    printf("[DB] SQLite initialized with file: %s\n", db_path);
+    printf("[SERVER] SQLite initialized with file: %s\n", db_path);
     return 0;
 }
 
@@ -48,7 +48,7 @@ int db_user_exists(const char *username) {
 
     int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB] db_user_exists: prepare failed: %s\n",
+        fprintf(stderr, "[SERVER] db_user_exists: prepare failed: %s\n",
                 sqlite3_errmsg(g_user_db));
         return 0;
     }
@@ -71,7 +71,7 @@ int db_verify_user(const char *username, const char *password) {
 
     int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB] db_verify_user: prepare failed: %s\n",
+        fprintf(stderr, "[SERVER] db_verify_user: prepare failed: %s\n",
                 sqlite3_errmsg(g_user_db));
         return 0;
     }
@@ -95,7 +95,7 @@ int db_create_user(const char *username, const char *password) {
 
     int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB] db_create_user: prepare failed: %s\n",
+        fprintf(stderr, "[SERVER] db_create_user: prepare failed: %s\n",
                 sqlite3_errmsg(g_user_db));
         return 0;
     }
@@ -105,7 +105,7 @@ int db_create_user(const char *username, const char *password) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "[DB] db_create_user: step failed: %s\n",
+        fprintf(stderr, "[SERVER] db_create_user: step failed: %s\n",
                 sqlite3_errmsg(g_user_db));
         sqlite3_finalize(stmt);
         return 0;
@@ -113,4 +113,82 @@ int db_create_user(const char *username, const char *password) {
 
     sqlite3_finalize(stmt);
     return 1;
+}
+
+void db_list_users(void) {
+    if (!g_user_db) {
+        fprintf(stderr, "[SERVER] db_list_users: chưa init db.\n");
+        return;
+    }
+
+    const char *sql = "SELECT username FROM users ORDER BY username;";
+    sqlite3_stmt *stmt = NULL;
+
+    int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "[SERVER] db_list_users: prepare failed: %s\n",
+                sqlite3_errmsg(g_user_db));
+        return;
+    }
+
+    printf("[SERVER] Danh sách các user:\n");
+    int has_any = 0;
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const unsigned char *uname = sqlite3_column_text(stmt, 0);
+        printf("  - %s\n", uname ? (const char *)uname : "(null)");
+        has_any = 1;
+    }
+
+    if (!has_any) {
+        printf("  (no users found)\n");
+    }
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "[SERVER] db_list_users: error: %s\n",
+                sqlite3_errmsg(g_user_db));
+    }
+
+    sqlite3_finalize(stmt);
+}
+
+int db_list_users_to_buffer(char *buf, size_t buf_size) {
+    if (!g_user_db || !buf || buf_size == 0) return 0;
+    const char *sql = "SELECT username FROM users ORDER BY username;";
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(g_user_db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "[SERVER] db_list_users_to_buffer: prepare failed: %s\n",
+                sqlite3_errmsg(g_user_db));
+        return 0;
+    }
+    size_t used = 0;
+    int count = 0;
+    int n = snprintf(buf + used, buf_size - used, "Registered users:\n");
+    if (n < 0) n = 0;
+    if ((size_t)n >= buf_size - used) {
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    used += (size_t)n;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const unsigned char *uname = sqlite3_column_text(stmt, 0);
+        const char *name = uname ? (const char *)uname : "(null)";
+
+        n = snprintf(buf + used, buf_size - used, "  - %s\n", name);
+        if (n < 0) n = 0;
+        if ((size_t)n >= buf_size - used) {
+            used = buf_size - 1;
+            break;
+        }
+        used += (size_t)n;
+        count++;
+    }
+    buf[used] = '\0';
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        fprintf(stderr, "[DB] db_list_users_to_buffer: step error: %s\n",
+                sqlite3_errmsg(g_user_db));
+    }
+    sqlite3_finalize(stmt);
+    return count;
 }
