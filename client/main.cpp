@@ -5,10 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h> // Để dùng File Dialog
 #include "state.h"
 #include "net_logic.h"
 #include "../libs/common/protocol.h"
+#include <windows.h> // Để dùng File Dialog
 #include <shellapi.h>
 
 AppState g_State; 
