@@ -338,17 +338,28 @@ void Net_JoinGroup(const char* group_name) {
     g_State.current_chat_id = topic;
 }
 
+// Hàm Net_SendFile ĐÃ SỬA ĐỔI
 void Net_SendFile(const char* target_id, const char* filepath) {
     FILE* f = fopen(filepath, "rb");
     if (!f) return;
+
+    // 1. Lấy tên file gốc
     std::string path_str = filepath;
-    std::string filename = path_str.substr(path_str.find_last_of("/\\") + 1);
+    std::string raw_filename = path_str.substr(path_str.find_last_of("/\\") + 1);
+
+    // 2. Tạo tên file mới theo định dạng: timestamp_sender_filename
+    // Việc tạo tên ở Client giúp Client biết chính xác ID để download sau này
+    long long now = (long long)time(NULL);
+    char final_filename[512];
+    snprintf(final_filename, sizeof(final_filename), "%lld_%s_%s", now, g_State.username, raw_filename.c_str());
+
     fseek(f, 0, SEEK_END);
-    unsigned long long size = (unsigned long long)F_TELL(f); // <--- DÙNG MACRO F_TELL
+    unsigned long long size = (unsigned long long)F_TELL(f);
     fseek(f, 0, SEEK_SET);
 
-    char meta[512];
-    snprintf(meta, sizeof(meta), "%s|%llu", filename.c_str(), size);
+    // 3. Gửi META chứa tên file ĐÃ SỬA
+    char meta[1024]; // Tăng buffer lên chút cho an toàn
+    snprintf(meta, sizeof(meta), "%s|%llu", final_filename, size);
     
     PacketHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -360,6 +371,12 @@ void Net_SendFile(const char* target_id, const char* filepath) {
     send_all(g_sock, &hdr, sizeof(hdr));
     send_all(g_sock, meta, hdr.payload_size);
 
+    // 4. Tự thêm tin nhắn vào khung chat của mình (Sender)
+    // Để hiển thị ngay lập tức với link download chính xác
+    std::string display_msg = "File: " + std::string(final_filename) + " (Size: " + std::to_string(size) + "). To download: /download " + std::string(final_filename);
+    ParseAndAddMessage(target_id, g_State.username, display_msg, false);
+
+    // 5. Gửi nội dung file (Chunk)
     char buf[1024]; size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
         PacketHeader chunk;
@@ -371,7 +388,6 @@ void Net_SendFile(const char* target_id, const char* filepath) {
         send_all(g_sock, &chunk, sizeof(chunk));
         send_all(g_sock, buf, n);
         
-        // Thay Sleep(1) bằng chuẩn C++ để chạy cả 2 OS
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     fclose(f);
