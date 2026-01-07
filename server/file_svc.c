@@ -53,7 +53,8 @@ void file_handle_meta(SOCKET sock, PacketHeader *hdr, const char *payload) {
     
     char path[260];
     time_t now = time(NULL);
-    snprintf(path, sizeof(path), "%s/%lld_%s_%s", files_dir, (long long)now, hdr->sender_id, fname);
+    // snprintf(path, sizeof(path), "%s/%lld_%s_%s", files_dir, (long long)now, hdr->sender_id, fname);
+    snprintf(path, sizeof(path), "%s/%s", files_dir, fname);
 
     FILE *fp = fopen(path, "wb");
     if (!fp) {
